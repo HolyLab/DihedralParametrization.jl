@@ -10,18 +10,18 @@ compute the coordinates of point `d` using the SN-NeRF algorithm.
 > Parsons, Jerod, et al. "Practical conversion from torsion space to Cartesian
 > space for in silico protein synthesis." Journal of computational chemistry 26.10 (2005): 1063-1068.
 """
-function snnerf(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T},
-                ℓcd::T, θbcd::T, ϕbc::T) where T<:Real
+function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
+                ℓcd::Real, θbcd::Real, ϕbc::Real)
     return snnerf(a, b, c, ℓcd, sincos(θbcd), sincos(ϕbc))
 end
 
-function snnerf(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T},
-                ℓcd::T, θbcd::T, (sϕ, cϕ)::Tuple{T,T}) where T<:Real
+function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
+                ℓcd::Real, θbcd::Real, (sϕ, cϕ)::Tuple{Real,Real})
     return snnerf(a, b, c, ℓcd, sincos(θbcd), (sϕ, cϕ))
 end
 
-function snnerf(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T},
-                ℓcd::T, (sθ, cθ)::Tuple{T,T}, (sϕ, cϕ)::Tuple{T,T}) where T<:Real
+function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
+                ℓcd::Real, (sθ, cθ)::Tuple{Real,Real}, (sϕ, cϕ)::Tuple{Real,Real})
     # Calculate unit vectors
     bc = c - b
     bc = bc / norm(bc)    # technically, SN-NeRF wants us to pass `norm(bc)` in as an argument
@@ -34,7 +34,7 @@ function snnerf(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T}
     return c + M * d2
 end
 
-function add_to_middle(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T}, βs::AbstractVector{T}...) where T<:Real
+function add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs::Vararg{V, N}) where {V<:AbstractVector, N}
     # used, e.g., to place the Cβ atom in a tetrahedral geometry
     ab = b - a
     ab = ab / norm(ab)
@@ -43,7 +43,9 @@ function add_to_middle(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVe
     n = cross(ab, cb)
     n = n / norm(n)
     M = [ab cb n]
-    return Ref(b) .+ Ref(M) .* βs
+    return map(βs) do β
+        b + M * β
+    end
 end
 
 """
@@ -53,14 +55,14 @@ Given a `BondParametrization` object `bp`, a vector of dihedral angles `dihedral
 and the coordinates of the first three backbone atoms in the chain (`n`, `cα`, and `c`),
 compute the 3D coordinates of all atoms in the chain.
 """
-function atomcoordinates(bp::BondParametrization, dihedrals::Vector{T}, n::SVector{3,T}, cα::SVector{3,T}, c::SVector{3,T}) where {T<:Real}
+function atomcoordinates(bp::BondParametrization, dihedrals::Vector{S}, n::SVector{3,T}, cα::SVector{3,T}, c::SVector{3,T}) where {S<:Real, T<:Real}
     # Check that the inputs are consistent with `bp`
     norm(cα - n) ≈ bp.bblengths[1] || error("Provided N and Cα do not match bond length in bp")
     norm(c - cα) ≈ bp.bblengths[2] || error("Provided Cα and C do not match bond length in bp")
     bondangle(n - cα, c - cα) ≈ bp.bbangles[1] || error("Provided N, Cα, and C do not match bond angle in bp")
 
     # Initialize the coordinates array
-    X = sizehint!([n, cα, c], length(bp.atoms))
+    X = sizehint!(SVector{3,promote_type(S, T)}[n, cα, c], length(bp.atoms))
     idx = 0  # index into dihedrals vector
     # Connect the backbone
     prev3, prev2, prev1 = n, cα, c
@@ -113,8 +115,8 @@ function atomcoordinates(bp::BondParametrization, dihedrals::Vector{T}, n::SVect
 end
 atomcoordinates(bp::BondParametrization, dihedrals::Vector, n::Atom, cα::Atom, c::Atom) = atomcoordinates(bp, dihedrals, SVector{3}(n.coords), SVector{3}(cα.coords), SVector{3}(c.coords))
 function atomcoordinates(bp::BondParametrization, dihedrals::Vector, chain::Chain)
-    nter = first(chain)
-    return atomcoordinates(bp, dihedrals, nter["N"], nter["CA"], nter["C"])
+    nter = first(chain)::Residue
+    return atomcoordinates(bp, dihedrals, nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom)
 end
 
 """

@@ -11,13 +11,19 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
 BioStructures = "4.6.1"
+DifferentiationInterface = "0.7.7"
+FiniteDifferences = "0.12.33"
 LinearAlgebra = "1.0"
+Mooncake = "0.4.159"
 OrderedCollections = "1.8.1"
 StaticArrays = "1.9.15"
 julia = "1.10"
 
 [extras]
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["DifferentiationInterface", "FiniteDifferences", "Mooncake", "Test"]
