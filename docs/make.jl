@@ -1,14 +1,14 @@
-using ProteinOptimization
+using DihedralParametrization
 using Documenter
 
-DocMeta.setdocmeta!(ProteinOptimization, :DocTestSetup, :(using ProteinOptimization); recursive=true)
+DocMeta.setdocmeta!(DihedralParametrization, :DocTestSetup, :(using DihedralParametrization); recursive=true)
 
 makedocs(;
-    modules=[ProteinOptimization],
+    modules=[DihedralParametrization],
     authors="Tim Holy <tim.holy@gmail.com> and contributors",
-    sitename="ProteinOptimization.jl",
+    sitename="DihedralParametrization.jl",
     format=Documenter.HTML(;
-        canonical="https://HolyLab.github.io/ProteinOptimization.jl",
+        canonical="https://HolyLab.github.io/DihedralParametrization.jl",
         edit_link="main",
         assets=String[],
     ),
@@ -18,6 +18,6 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/HolyLab/ProteinOptimization.jl",
+    repo="github.com/HolyLab/DihedralParametrization.jl",
     devbranch="main",
 )

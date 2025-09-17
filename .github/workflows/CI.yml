@@ -23,9 +23,8 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.10'
-          - '1.6'
-          - 'pre'
+          - 'min'
+          - '1'
         os:
           - ubuntu-latest
         arch:
@@ -73,6 +72,6 @@ jobs:
         shell: julia --project=docs --color=yes {0}
         run: |
           using Documenter: DocMeta, doctest
-          using ProteinOptimization
-          DocMeta.setdocmeta!(ProteinOptimization, :DocTestSetup, :(using ProteinOptimization); recursive=true)
-          doctest(ProteinOptimization)
+          using DihedralParametrization
+          DocMeta.setdocmeta!(DihedralParametrization, :DocTestSetup, :(using DihedralParametrization); recursive=true)
+          doctest(DihedralParametrization)

@@ -1,14 +1,14 @@
 ```@meta
-CurrentModule = ProteinOptimization
+CurrentModule = DihedralParametrization
 ```
 
-# ProteinOptimization
+# DihedralParametrization
 
-Documentation for [ProteinOptimization](https://github.com/HolyLab/ProteinOptimization.jl).
+Documentation for [DihedralParametrization](https://github.com/HolyLab/DihedralParametrization.jl).
 
 ```@index
 ```
 
 ```@autodocs
-Modules = [ProteinOptimization]
+Modules = [DihedralParametrization]
 ```
