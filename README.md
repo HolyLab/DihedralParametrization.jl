@@ -11,6 +11,10 @@ DihedralParametrization builds models of [protein structure](https://en.wikipedi
 Each rotatable bond's configuration is specified by a single number, the [dihedral angle](https://en.wikipedia.org/wiki/Dihedral_angle#In_stereochemistry), also sometimes called the torsion angle.
 The most well-known angles are the backbone dihedrals `ϕ` and `ψ` often represented using [Ramachandran plots](https://en.wikipedia.org/wiki/Ramachandran_plot).
 However, most amino acids also have one or more rotatable bonds in their side chains, specified by `χ` angles.
+This package aims to offer a complete parametrization in terms of all rotatable bonds.
+
+If you are only interested in the backbone degrees of freedom, see [Backboner](https://github.com/MurrellGroup/Backboner.jl) instead.
+
 
 ## Installation
 
@@ -29,14 +33,14 @@ This structure must satisfy certain constraints:
 - Histidine should be diambiguated as
   [HID/HIE/HIP](https://ambermd.org/Questions/HIS.html), and the amino- and
   carboxyl-terminal residues should have "N" and "C" prepended to their residue
-  names, respectively. BioStructure's `specialize_resnames!(chain)` should
+  names, respectively. BioStructure's `specializeresnames!(chain)` should
   suffice for this part (assuming you've already added hydrogens).
 
 ## Demo
 
 The `test/data` folder of this package contains a fairly small protein structure with hydrogens added.
 This structure was computed by [AlphaFold2](https://alphafold.com/); note that small proteins are often
-stabilized by disulfide bonds, which represents a [challenge](https://pmc.ncbi.nlm.nih.gov/articles/PMC8712280/#s0090) for accurate structural prediction.
+stabilized by disulfide bonds, which represents a [challenge](https://pmc.ncbi.nlm.nih.gov/articles/PMC8712280/) for accurate structural prediction.
 Thus the structure should only be taken as an illustration.
 
 ```julia
@@ -47,7 +51,7 @@ julia> cd(joinpath(pkgdir(DihedralParametrization), "test", "data"))
 julia> struc = read("AF-M3YHX5-F1-model_v4_hydrogens.cif", MMCIFFormat)
 MolecularStructure AF-M3YHX5-F1-model_v4_hydrogens.cif with 1 models, 1 chains (A), 112 residues, 1833 atoms
 
-julia> specialize_resnames!(struc)
+julia> specializeresnames!(struc)
 MolecularStructure AF-M3YHX5-F1-model_v4_hydrogens.cif with 1 models, 1 chains (A), 112 residues, 1833 atoms
 
 julia> A = struc["A"]
@@ -66,7 +70,7 @@ julia> summary(dihedrals)
 ```
 
 `bp` contains "fixed" data for the protein structure: details on bond lengths, bond angles, and the dihedral angles of non-rotatable bonds.
-`dihedrals` is a vector containing just the dihedral angles (in radians) for just the rotatable bonds, and represents the degrees of freedom in the protein structure.
+`dihedrals` is a vector containing the dihedral angles (in radians) for just the rotatable bonds, and represents the degrees of freedom in the protein structure.
 
 The values in `dihedrals` represent the current state of the chain `A`,
 but the key point is that you can specify a different vector (with entries ranging from -π to π) to generate a different configuration.

@@ -32,7 +32,7 @@ end
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)
         chain = only(only(struc))
-        specialize_resnames!(struc)
+        specializeresnames!(struc)
         bp, dihedrals = bondparametrization(chain)
         X = atomcoordinates(bp, dihedrals, chain)
         for (i, (adata, coords)) in enumerate(zip(bp.atoms, X))
@@ -52,7 +52,7 @@ end
 
             path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
             struc = read(path, MMCIFFormat)
-            specialize_resnames!(struc)
+            specializeresnames!(struc)
             A = only(only(struc))
 
             makeX, n = makef(A)
