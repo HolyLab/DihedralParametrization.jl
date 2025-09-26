@@ -34,7 +34,7 @@ function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
     return c + M * d2
 end
 
-function add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs::Vararg{V, N}) where {V<:AbstractVector, N}
+function add_to_middle!(X, a::AbstractVector, b::AbstractVector, c::AbstractVector, βs)
     # used, e.g., to place the Cβ atom in a tetrahedral geometry
     ab = b - a
     ab = ab / norm(ab)
@@ -43,10 +43,14 @@ function add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, 
     n = cross(ab, cb)
     n = n / norm(n)
     M = [ab cb n]
-    return map(βs) do β
-        b + M * β
+    for β in βs
+        push!(X, b + M * β)
     end
+    return X
 end
+
+add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs) =
+    add_to_middle!(promote_type(typeof(a), typeof(b), typeof(c))[], a, b, c, βs)
 
 """
     X = atomcoordinates(bp::BondParametrization{T}, dihedrals::Vector{T}, n::AbstractVector{T}, cα::AbstractVector{T}, c::AbstractVector{T}) where T<:Real
@@ -105,8 +109,7 @@ function atomcoordinates(bp::BondParametrization, dihedrals::Vector{S}, n::SVect
                 push!(X, d)
             elseif step isa Branch{T}
                 a, b, c = X[SVector(step.predecessors)]
-                d = add_to_middle(a, b, c, step.βs...)
-                push!(X, d...)
+                d = add_to_middle!(X, a, b, c, step.βs)
             end
         end
     end

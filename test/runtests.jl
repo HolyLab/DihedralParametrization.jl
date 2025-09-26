@@ -21,7 +21,7 @@ end
             drc = DihedralParametrization.snnerf(a, b, c, ℓ, θ, ϕ)
             @test isapprox(drc, dgt; atol=1e-8)
             βs = DihedralParametrization.betas(a, b, c, [dgt])
-            drc = only(DihedralParametrization.add_to_middle(a, b, c, βs...))
+            drc = only(DihedralParametrization.add_to_middle(a, b, c, βs))
             @test isapprox(drc, dgt; atol=1e-8)
         end
     end
