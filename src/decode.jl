@@ -87,7 +87,7 @@ function atomcoordinates(bp::BondParametrization, dihedrals::Vector{S}, n::SVect
         push!(X, d)
         prev3, prev2, prev1 = prev2, prev1, d
         # add the next C
-        φ = dihedrals[idx+=1]       # rotatable
+        φ = bp.phirotatable[i] ? dihedrals[idx+=1] : bp.phi[i]
         ℓ = bp.bblengths[3*i - 1]
         θ = bp.bbangles[3*i - 2]
         d = snnerf(prev3, prev2, prev1, ℓ, θ, φ)

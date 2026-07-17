@@ -34,6 +34,8 @@ struct BondParametrization{T<:Real}
     bblengths::Vector{T}          # backbone bond lengths, of length 3*nres (we use OXT for the last C)
     bbangles::Vector{T}           # backbone bond angles, of length 3*nres-1 (")
     omegas::Vector{T}             # omega dihedrals (fixed and not represented in the dihedrals vector), of length nres (final one is for placement of OXT)
+    phirotatable::Vector{Bool}    # whether residue i's own phi is a free dihedral, of length nres (residue 1 has no phi; entry unused)
+    phi::Vector{T}                # fixed phi value for residue i, of length nres (only meaningful where !phirotatable[i])
     residues::Vector{ResidueData{T}}   # list of residues
 end
 
@@ -84,6 +86,8 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     bblengths = Vector{T}(undef, 3nres)
     bbangles = Vector{T}(undef, 3nres-1)
     omegas = deleteat!(omegaangles(ress), 1)   # we'll add one more omega at the end for placement of OXT
+    phirotatable = Vector{Bool}(undef, nres)
+    phi = Vector{T}(undef, nres)
     residues = Vector{ResidueData{T}}(undef, nres)
     dihedrals = T[]
 
@@ -116,7 +120,14 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         bbangles[3i - 1] = bondangle(cα, c, next)  # Cα - C - N(next)
         if i < nres
             push!(dihedrals, ψs[i])
-            push!(dihedrals, ϕs[i+1])
+            # A ring through the N-CA bond (proline) leaves ϕ no freedom to
+            # vary: rigid ring bond lengths and angles pin it, exactly as
+            # `omegas` is pinned. Such a ϕ is carried as fixed data instead
+            # of an entry in `dihedrals`, mirroring `Extend`'s `rotatable`/`ϕ`.
+            rot = residue_phi_rotatable[resname(ress[i+1])]
+            phirotatable[i+1] = rot
+            phi[i+1] = ϕs[i+1]
+            rot && push!(dihedrals, ϕs[i+1])
             nextnext = ress[i+1]["CA"]
             bbangles[3i] = bondangle(c, next, nextnext)  # C - N(next) - Cα(next)
         else
@@ -167,7 +178,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         residues[i] = ResidueData{T}(steps)
     end
     @assert aidx == natoms   # amino terminus may have two extra H
-    return BondParametrization{T}(atoms, bblengths, bbangles, omegas, residues), dihedrals
+    return BondParametrization{T}(atoms, bblengths, bbangles, omegas, phirotatable, phi, residues), dihedrals
 end
 bondparametrization(chain::Chain) = bondparametrization(Float64, chain)
 
