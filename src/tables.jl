@@ -4,13 +4,15 @@
 # The pattern (a, b, c, [d1, d2, ...]) indicates that atoms d1, d2, ... are attached to b
 # The pattern (a, b, c, d, tf) indicates that atom d is attached to c; tf indicates whether the dihedral
 #   formed by a-b-c-d is rotatable (true) or fixed (false)
+# A reference atom prefixed with "-" or "+" (e.g. "-C", "+N") names that atom in the previous or
+#   next residue rather than the current one, following the CHARMM convention.
 const residue_build_sequence = Dict(
     "ALA" => [
             ("C", "CA", "N", ["CB", "HA"]),
             ("C", "CA", "CB", "HB1", true),
             ("CA", "CB", "HB1", ["HB2", "HB3"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "ARG" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -24,8 +26,8 @@ const residue_build_sequence = Dict(
             ("CD", "NE", "CZ", ["HE"]),
             ("CD", "NE", "CZ", "NH1", true),
             ("NE", "CZ", "NH1", ["NH2"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
             ("NE", "CZ", "NH2", "HH22", false),
             ("CZ", "NH2", "HH22", ["HH21"]),
             ("NE", "CZ", "NH1", "HH11", false),
@@ -39,8 +41,8 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "OD1", ["ND2"]),
             ("CB", "CG", "ND2", "HD21", true),
             ("CG", "ND2", "HD21", ["HD22"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "ASP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -48,8 +50,8 @@ const residue_build_sequence = Dict(
             ("CA", "CB", "CG", ["HB2", "HB3"]),
             ("CA", "CB", "CG", "OD1", true),
             ("CB", "CG", "OD1", ["OD2"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CALA" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -57,7 +59,7 @@ const residue_build_sequence = Dict(
             ("CA", "C", "OXT", ["O"]),
             ("C", "CA", "CB", "HB1", true),
             ("CA", "CB", "HB1", ["HB2", "HB3"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CARG" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -73,7 +75,7 @@ const residue_build_sequence = Dict(
             ("NE", "CZ", "NH1", ["NH2"]),
             ("CB", "CA", "C", "OXT", true),
             ("CA", "C", "OXT", ["O"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
             ("NE", "CZ", "NH2", "HH22", false),
             ("CZ", "NH2", "HH22", ["HH21"]),
             ("NE", "CZ", "NH1", "HH11", false),
@@ -89,7 +91,7 @@ const residue_build_sequence = Dict(
             ("CA", "C", "OXT", ["O"]),
             ("CB", "CG", "ND2", "HD21", true),
             ("CG", "ND2", "HD21", ["HD22"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CASP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -99,7 +101,7 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "OD1", ["OD2"]),
             ("CB", "CA", "C", "OXT", true),
             ("CA", "C", "OXT", ["O"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CCYS" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -108,7 +110,7 @@ const residue_build_sequence = Dict(
             ("C", "CA", "CB", "SG", true),
             ("CA", "CB", "SG", ["HB2", "HB3"]),
             ("CA", "CB", "SG", "HG", true),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CGLN" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -122,7 +124,7 @@ const residue_build_sequence = Dict(
             ("CA", "C", "OXT", ["O"]),
             ("CG", "CD", "NE2", "HE21", true),
             ("CD", "NE2", "HE21", ["HE22"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CGLU" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -134,13 +136,13 @@ const residue_build_sequence = Dict(
             ("CG", "CD", "OE1", ["OE2"]),
             ("CB", "CA", "C", "OXT", true),
             ("CA", "C", "OXT", ["O"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CGLY" => [
             ("C", "CA", "N", ["HA2", "HA3"]),
             ("N", "CA", "C", "OXT", true),
             ("CA", "C", "OXT", ["O"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CHID" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -155,7 +157,7 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "CD2", "NE2", false),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CHIE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -170,7 +172,7 @@ const residue_build_sequence = Dict(
             ("CD2", "NE2", "CE1", ["HE2"]),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CHIP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -186,7 +188,7 @@ const residue_build_sequence = Dict(
             ("CD2", "NE2", "CE1", ["HE2"]),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CILE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -200,7 +202,7 @@ const residue_build_sequence = Dict(
             ("CG1", "CD1", "HD11", ["HD12", "HD13"]),
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CLEU" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -214,7 +216,7 @@ const residue_build_sequence = Dict(
             ("CG", "CD2", "HD21", ["HD22", "HD23"]),
             ("CB", "CG", "CD1", "HD11", true),
             ("CG", "CD1", "HD11", ["HD12", "HD13"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CLYS" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -230,7 +232,7 @@ const residue_build_sequence = Dict(
             ("CA", "C", "OXT", ["O"]),
             ("CD", "CE", "NZ", "HZ1", true),
             ("CE", "NZ", "HZ1", ["HZ2", "HZ3"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CMET" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -243,7 +245,7 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "SD", "CE", true),
             ("CG", "SD", "CE", "HE1", true),
             ("SD", "CE", "HE1", ["HE2", "HE3"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CPHE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -261,7 +263,7 @@ const residue_build_sequence = Dict(
             ("CD2", "CE2", "CZ", ["HE2"]),
             ("CE1", "CZ", "CE2", ["HZ"]),
             ("CD1", "CE1", "CZ", ["HE1"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CPRO" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -280,7 +282,7 @@ const residue_build_sequence = Dict(
             ("CB", "CA", "C", "OXT", true),
             ("CA", "C", "OXT", ["O"]),
             ("CA", "CB", "OG", "HG", true),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CTHR" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -291,7 +293,7 @@ const residue_build_sequence = Dict(
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
             ("CA", "CB", "OG1", "HG1", true),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CTRP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -313,7 +315,7 @@ const residue_build_sequence = Dict(
             ("CD2", "CE2", "CZ2", ["NE1"]),
             ("CG", "CD1", "NE1", ["HD1"]),
             ("CD1", "NE1", "CE2", ["HE1"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CTYR" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -332,7 +334,7 @@ const residue_build_sequence = Dict(
             ("CE1", "CZ", "CE2", ["OH"]),
             ("CD1", "CE1", "CZ", ["HE1"]),
             ("CE1", "CZ", "OH", "HH", true),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CVAL" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -344,15 +346,15 @@ const residue_build_sequence = Dict(
             ("CB", "CG1", "HG11", ["HG12", "HG13"]),
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
-            ("C", "CA", "N", "H", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "CYS" => [
             ("C", "CA", "N", ["CB", "HA"]),
             ("C", "CA", "CB", "SG", true),
             ("CA", "CB", "SG", ["HB2", "HB3"]),
             ("CA", "CB", "SG", "HG", true),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "GLN" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -364,8 +366,8 @@ const residue_build_sequence = Dict(
             ("CG", "CD", "OE1", ["NE2"]),
             ("CG", "CD", "NE2", "HE21", true),
             ("CD", "NE2", "HE21", ["HE22"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "GLU" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -375,13 +377,13 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "CD", ["HG2", "HG3"]),
             ("CB", "CG", "CD", "OE1", true),
             ("CG", "CD", "OE1", ["OE2"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "GLY" => [
             ("C", "CA", "N", ["HA2", "HA3"]),
-            ("N", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "HID" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -394,8 +396,8 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "CD2", "NE2", false),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "HIE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -408,8 +410,8 @@ const residue_build_sequence = Dict(
             ("CD2", "NE2", "CE1", ["HE2"]),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "HIP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -423,8 +425,8 @@ const residue_build_sequence = Dict(
             ("CD2", "NE2", "CE1", ["HE2"]),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "ILE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -436,8 +438,8 @@ const residue_build_sequence = Dict(
             ("CG1", "CD1", "HD11", ["HD12", "HD13"]),
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "LEU" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -449,8 +451,8 @@ const residue_build_sequence = Dict(
             ("CG", "CD2", "HD21", ["HD22", "HD23"]),
             ("CB", "CG", "CD1", "HD11", true),
             ("CG", "CD1", "HD11", ["HD12", "HD13"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "LYS" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -464,8 +466,8 @@ const residue_build_sequence = Dict(
             ("CD", "CE", "NZ", ["HE2", "HE3"]),
             ("CD", "CE", "NZ", "HZ1", true),
             ("CE", "NZ", "HZ1", ["HZ2", "HZ3"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "MET" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -476,8 +478,8 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "SD", "CE", true),
             ("CG", "SD", "CE", "HE1", true),
             ("SD", "CE", "HE1", ["HE2", "HE3"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "NALA" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -485,7 +487,7 @@ const residue_build_sequence = Dict(
             ("CA", "N", "H2", ["H1", "H3"]),
             ("C", "CA", "CB", "HB1", true),
             ("CA", "CB", "HB1", ["HB2", "HB3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NARG" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -501,7 +503,7 @@ const residue_build_sequence = Dict(
             ("NE", "CZ", "NH1", ["NH2"]),
             ("C", "CA", "N", "H2", true),
             ("CA", "N", "H2", ["H1", "H3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
             ("NE", "CZ", "NH2", "HH22", false),
             ("CZ", "NH2", "HH22", ["HH21"]),
             ("NE", "CZ", "NH1", "HH11", false),
@@ -517,7 +519,7 @@ const residue_build_sequence = Dict(
             ("CA", "N", "H2", ["H1", "H3"]),
             ("CB", "CG", "ND2", "HD21", true),
             ("CG", "ND2", "HD21", ["HD22"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NASP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -527,7 +529,7 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "OD1", ["OD2"]),
             ("C", "CA", "N", "H2", true),
             ("CA", "N", "H2", ["H1", "H3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NCYS" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -536,7 +538,7 @@ const residue_build_sequence = Dict(
             ("C", "CA", "N", "H2", true),
             ("CA", "N", "H2", ["H1", "H3"]),
             ("CA", "CB", "SG", "HG", true),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NGLN" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -550,7 +552,7 @@ const residue_build_sequence = Dict(
             ("CA", "N", "H2", ["H1", "H3"]),
             ("CG", "CD", "NE2", "HE21", true),
             ("CD", "NE2", "HE21", ["HE22"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NGLU" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -562,13 +564,13 @@ const residue_build_sequence = Dict(
             ("CG", "CD", "OE1", ["OE2"]),
             ("C", "CA", "N", "H2", true),
             ("CA", "N", "H2", ["H1", "H3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NGLY" => [
             ("C", "CA", "N", ["HA2", "HA3"]),
             ("C", "CA", "N", "H2", true),
             ("CA", "N", "H2", ["H1", "H3"]),
-            ("N", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NHID" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -583,7 +585,7 @@ const residue_build_sequence = Dict(
             ("CG", "ND1", "CE1", "NE2", false),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NHIE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -598,7 +600,7 @@ const residue_build_sequence = Dict(
             ("CD2", "NE2", "CE1", ["HE2"]),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NHIP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -614,7 +616,7 @@ const residue_build_sequence = Dict(
             ("CD2", "NE2", "CE1", ["HE2"]),
             ("CG", "CD2", "NE2", ["HD2"]),
             ("ND1", "CE1", "NE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NILE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -628,7 +630,7 @@ const residue_build_sequence = Dict(
             ("CG1", "CD1", "HD11", ["HD12", "HD13"]),
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NLEU" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -642,7 +644,7 @@ const residue_build_sequence = Dict(
             ("CG", "CD2", "HD21", ["HD22", "HD23"]),
             ("CB", "CG", "CD1", "HD11", true),
             ("CG", "CD1", "HD11", ["HD12", "HD13"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NLYS" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -658,7 +660,7 @@ const residue_build_sequence = Dict(
             ("CA", "N", "H2", ["H1", "H3"]),
             ("CD", "CE", "NZ", "HZ1", true),
             ("CE", "NZ", "HZ1", ["HZ2", "HZ3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NMET" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -671,7 +673,7 @@ const residue_build_sequence = Dict(
             ("CA", "N", "H2", ["H1", "H3"]),
             ("CG", "SD", "CE", "HE1", true),
             ("SD", "CE", "HE1", ["HE2", "HE3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NPHE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -689,7 +691,7 @@ const residue_build_sequence = Dict(
             ("CD2", "CE2", "CZ", ["HE2"]),
             ("CE1", "CZ", "CE2", ["HZ"]),
             ("CD1", "CE1", "CZ", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NPRO" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -699,7 +701,7 @@ const residue_build_sequence = Dict(
             ("CB", "CG", "CD", ["HG2", "HG3"]),
             ("CA", "CB", "CG", ["HB2", "HB3"]),
             ("CG", "CD", "N", ["HD2", "HD3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NSER" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -708,7 +710,7 @@ const residue_build_sequence = Dict(
             ("C", "CA", "N", "H2", true),
             ("CA", "N", "H2", ["H1", "H3"]),
             ("CA", "CB", "OG", "HG", true),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NTHR" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -719,7 +721,7 @@ const residue_build_sequence = Dict(
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
             ("CA", "CB", "OG1", "HG1", true),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NTRP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -741,7 +743,7 @@ const residue_build_sequence = Dict(
             ("CD2", "CE2", "CZ2", ["NE1"]),
             ("CG", "CD1", "NE1", ["HD1"]),
             ("CD1", "NE1", "CE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NTYR" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -760,7 +762,7 @@ const residue_build_sequence = Dict(
             ("CE1", "CZ", "CE2", ["OH"]),
             ("CD1", "CE1", "CZ", ["HE1"]),
             ("CE1", "CZ", "OH", "HH", true),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "NVAL" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -772,7 +774,7 @@ const residue_build_sequence = Dict(
             ("CB", "CG1", "HG11", ["HG12", "HG13"]),
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "PHE" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -788,8 +790,8 @@ const residue_build_sequence = Dict(
             ("CD2", "CE2", "CZ", ["HE2"]),
             ("CE1", "CZ", "CE2", ["HZ"]),
             ("CD1", "CE1", "CZ", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "PRO" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -798,15 +800,15 @@ const residue_build_sequence = Dict(
             ("CA", "CB", "CG", ["HB2", "HB3"]),
             ("CG", "CD", "N", ["HD2", "HD3"]),
             ("CB", "CG", "CD", ["HG2", "HG3"]),
-            ("CB", "CA", "C", "O", false),
+            ("+N", "CA", "C", "O", false),
         ],
     "SER" => [
             ("C", "CA", "N", ["CB", "HA"]),
             ("C", "CA", "CB", "OG", true),
             ("CA", "CB", "OG", ["HB2", "HB3"]),
             ("CA", "CB", "OG", "HG", true),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "THR" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -815,8 +817,8 @@ const residue_build_sequence = Dict(
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
             ("CA", "CB", "OG1", "HG1", true),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "TRP" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -836,8 +838,8 @@ const residue_build_sequence = Dict(
             ("CD2", "CE2", "CZ2", ["NE1"]),
             ("CG", "CD1", "NE1", ["HD1"]),
             ("CD1", "NE1", "CE2", ["HE1"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "TYR" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -854,8 +856,8 @@ const residue_build_sequence = Dict(
             ("CE1", "CZ", "CE2", ["OH"]),
             ("CD1", "CE1", "CZ", ["HE1"]),
             ("CE1", "CZ", "OH", "HH", true),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
     "VAL" => [
             ("C", "CA", "N", ["CB", "HA"]),
@@ -865,7 +867,7 @@ const residue_build_sequence = Dict(
             ("CB", "CG1", "HG11", ["HG12", "HG13"]),
             ("CA", "CB", "CG2", "HG21", true),
             ("CB", "CG2", "HG21", ["HG22", "HG23"]),
-            ("CB", "CA", "C", "O", false),
-            ("C", "CA", "N", "H", false),
+            ("+N", "CA", "C", "O", false),
+            ("-C", "CA", "N", "H", false),
         ],
 )
