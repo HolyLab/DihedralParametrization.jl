@@ -132,28 +132,41 @@ end
         tol = 1e-8
         sensitive(k) = maximum(abs, @view J[k, :]) > tol
 
-        # Proline's sidechain closes a ring back onto N, but the build sequence
-        # is a tree: CB is placed from (C, CA, N) while CG is reached the long
-        # way round through CD, so nothing holds the CB-CG closure. The ring
-        # dihedrals are consequently not free, and the coordinates spanning the
-        # closure are not invariant.
-        resnameof = Dict(resnumber(r) => resname(r) for r in ress)
-        ringatoms = ("CB", "CG", "CD", "HB2", "HB3", "HG2", "HG3", "HD2", "HD3")
-        inprolinering(k) = resnameof[ridx[k]] == "PRO" && anames[k] in ringatoms
-        touchesring(t) = any(inprolinering, t)
-
-        badlengths = count(k -> !touchesring(bonds[k]) && sensitive(k), 1:nbonds)
-        badangles = count(k -> !touchesring(angles[k-nbonds]) && sensitive(k), nbonds+1:size(J, 1))
+        badlengths = count(sensitive, 1:nbonds)
+        badangles = count(sensitive, nbonds+1:size(J, 1))
         @test badlengths == 0
         @test badangles == 0
+    end
 
-        # The proline ring closure itself. Marked broken rather than skipped so
-        # the gap is visible: PRO's ("C","CA","N","CD") and ("CA","N","CD","CG")
-        # steps are flagged rotatable, which promises degrees of freedom the
-        # ring does not actually have.
-        prolineCBCG = [k for k = 1:nbonds if namematch(bonds[k]..., "CB", "CG") && resnameof[ridx[bonds[k][1]]] == "PRO"]
-        @test length(prolineCBCG) == count(r -> resname(r) == "PRO", ress)
-        @test_broken !any(sensitive, prolineCBCG)
+    @testset "Degrees of freedom" begin
+        # Proline's ring (N-CA-CB-CG-CD-N) has rigid bond lengths and angles
+        # and so has no internal mobility: chi1, chi2, and phi are all fixed
+        # by the ring rather than free parameters. This is the only source of
+        # residue-count-dependent DOF loss relative to a naive per-residue count.
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        ress = collectresidues(chain)
+        nres = length(ress)
+        nproline = count(r -> resname(r) in ("PRO", "NPRO", "CPRO"), ress)
+        @test nproline == 8
+
+        bp, dihedrals = bondparametrization(chain)
+
+        # Backbone: psi for every residue but the last, phi for every residue
+        # but the first and any proline, plus one final dihedral to place OXT.
+        nphi_free = count(i -> bp.phirotatable[i], 2:nres)
+        @test nphi_free == nres - 1 - nproline
+        nsidechain_free = sum(r -> count(step -> step isa DihedralParametrization.Extend && step.rotatable, r.steps), bp.residues)
+        @test length(dihedrals) == (nres - 1) + nphi_free + 1 + nsidechain_free
+
+        # No proline contributes a phi or a chi to `dihedrals`.
+        prolineresidx = [i for i = 1:nres if resname(ress[i]) in ("PRO", "NPRO", "CPRO")]
+        for i in prolineresidx
+            i > 1 && @test !bp.phirotatable[i]
+            @test !any(step -> step isa DihedralParametrization.Extend && step.rotatable, bp.residues[i].steps)
+        end
     end
 
     if testad
