@@ -40,6 +40,32 @@ end
 Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(length(bp.residues)) residues")
 
 """
+    resatom, ridx = resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
+
+Resolve a build-step reference atom name `ref` for residue `ress[i]`.
+Standard names resolve within-residue. A name prefixed with `-` or `+`
+(e.g. `"-C"`, `"+N"`, the CHARMM convention) names an atom in the previous
+or next residue rather than in `ress[i]`.
+
+Returns the `Atom` together with its index into the coordinate array that
+`atomcoordinates` builds.
+"""
+function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
+    c1 = ref[1]
+    if c1 == '-' || c1 == '+'
+        aname = ref[2:end]
+        j = c1 == '-' ? i - 1 : i + 1
+        ok = 1 <= j <= length(ress) && (c1 == '-' ? sequentialresidues(ress[j], ress[i]) : sequentialresidues(ress[i], ress[j]))
+        ok || error("residue $i ($(resname(ress[i]))): cannot resolve build-step reference \"$ref\" — " *
+                    (1 <= j <= length(ress) ? "residue $j is not sequential with residue $i (chain break)" :
+                     "residue $i has no " * (c1 == '-' ? "preceding" : "following") * " residue"))
+        return ress[j][aname], resatomidxs[j][aname]
+    else
+        return ress[i][ref], resatomidxs[i][ref]
+    end
+end
+
+"""
     bp, dihedrals = bondparametrization(chain)
 
 Parametrize a protein `chain` via bond parameters. Together, `bp` and
@@ -112,10 +138,13 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 if i == 1 && d == "H" && !haskey(res.atoms, "H")  # FIXME: this is a hack
                     d = "H2"
                 end
-                predecessors = (atomidx[a], atomidx[b], atomidx[c])
-                ℓcd = norm(res[c].coords - res[d].coords)
-                θbcd = bondangle(res[b], res[c], res[d])
-                ϕ = dihedralangle(res[a], res[b], res[c], res[d])
+                atomA, idxA = resolvebuildref(a, i, ress, resatomidxs)
+                atomB, idxB = resolvebuildref(b, i, ress, resatomidxs)
+                atomC, idxC = resolvebuildref(c, i, ress, resatomidxs)
+                predecessors = (idxA, idxB, idxC)
+                ℓcd = norm(atomC.coords - res[d].coords)
+                θbcd = bondangle(atomB, atomC, res[d])
+                ϕ = dihedralangle(atomA, atomB, atomC, res[d])
                 push!(steps, Extend{T}(predecessors, ℓcd, θbcd, rotatable, ϕ))
                 if rotatable
                     push!(dihedrals, ϕ)

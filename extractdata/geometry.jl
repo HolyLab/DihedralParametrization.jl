@@ -143,12 +143,16 @@ function parse_residue_graph(resname::AbstractString)
             sort!(quad[4])
         else
             a, b, c, d, tf = quad
-            if a === :HA
-                if c === :N && d === :H
-                    additions[i] = (:C, b, c, d, tf)
-                elseif c === :C && d === :O
-                    additions[i] = (:N, b, c, d, tf)
-                end
+            # H(i) is rigid with C(i-1) (both bonded to N(i)), not with any atom
+            # in residue i; O(i) is rigid with N(i+1) (both bonded to C(i)). A
+            # same-residue reference for either co-rotates with a dihedral that
+            # must leave them fixed (φ(i) for H, ψ(i) for O), so name the
+            # adjacent residue's atom using the CHARMM `-`/`+` convention;
+            # encode.jl resolves it against the neighboring residue.
+            if b === :CA && c === :N && d === :H
+                additions[i] = (Symbol("-C"), b, c, d, tf)
+            elseif b === :CA && c === :C && d === :O
+                additions[i] = (Symbol("+N"), b, c, d, tf)
             end
         end
     end
@@ -169,6 +173,8 @@ open(joinpath(dirname(@__DIR__), "src", "tables.jl"), "w") do io
     println(io, "# The pattern (a, b, c, [d1, d2, ...]) indicates that atoms d1, d2, ... are attached to b")
     println(io, "# The pattern (a, b, c, d, tf) indicates that atom d is attached to c; tf indicates whether the dihedral")
     println(io, "#   formed by a-b-c-d is rotatable (true) or fixed (false)")
+    println(io, "# A reference atom prefixed with \"-\" or \"+\" (e.g. \"-C\", \"+N\") names that atom in the previous or")
+    println(io, "#   next residue rather than the current one, following the CHARMM convention.")
     println(io, "const residue_build_sequence = Dict(")
     for resname in sort(collect(keys(BioStructures.residuedata)))
         resname ∉ generate_for_aas && continue
