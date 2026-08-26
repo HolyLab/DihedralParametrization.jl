@@ -42,16 +42,45 @@ end
         end
     end
 
+    @testset "Disulfide (CYX)" begin
+        # Residues 37 and 69 are renamed CYX and have no HG. The fixture does
+        # not model the S-S bond because this test only exercises templates.
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens_CYX.cif")
+        struc = read(path, MMCIFFormat)
+        chain = only(only(struc))
+        specializeresnames!(struc)
+        ress = collectresidues(chain)
+        @test count(r -> resname(r) == "CYX", ress) == 2
+
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+        for (adata, coords) in zip(bp.atoms, X)
+            at = chain[adata.ridx][String(adata.aname)]
+            @test isapprox(at.coords, coords; atol=1e-8)
+        end
+        cyxridxs = Set(resnumber(r) for r in ress if resname(r) == "CYX")
+        @test !any(a -> a.ridx in cyxridxs && a.aname == :HG, bp.atoms)
+
+        # CYX must not retain its thiol hydrogen.
+        pathfree = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        strucfree = read(pathfree, MMCIFFormat)
+        chainfree = only(only(strucfree))
+        specializeresnames!(strucfree)
+        ressfree = collectresidues(chainfree)
+        cysfree = only(filter(r -> resnumber(r) == 37, ressfree))
+        @test resname(cysfree) == "CYS"
+        cysfree.name = "CYX"   # CYX with HG still attached
+        @test_throws "CYX (disulfide-bonded cysteine) must not have a thiol HG" bondparametrization(chainfree)
+
+        # Missing template atoms report residue context.
+        cysfree.name = "CYS"
+        delete!(cysfree.atoms, "HG")
+        @test_throws "cannot find atom \"HG\"" bondparametrization(chainfree)
+    end
+
     @testset "Bond lengths and angles are invariant under every dihedral" begin
-        # The parametrization's defining contract: reconstructing at any
-        # dihedral vector must leave every bond length and every bond angle
-        # fixed at its encoded value, since only the dihedrals themselves are
-        # free parameters. This must hold across residue boundaries too --
-        # C(i)-N(i+1), O(i)-C(i)-N(i+1), C(i)-N(i+1)-CA(i+1), and
-        # C(i)-N(i+1)-H(i+1) -- since a same-residue build reference for H(i)
-        # or O(i) would let it co-rotate with φ(i) or ψ(i) instead of staying
-        # fixed. A test that only looked at same-residue geometry would pass
-        # vacuously.
+        # Changing dihedrals must preserve all bond lengths and angles,
+        # including those spanning residue boundaries.
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)
         specializeresnames!(struc)
@@ -70,11 +99,7 @@ end
         anames = [String(a.aname) for a in bp.atoms]
         ridx = [a.ridx for a in bp.atoms]
 
-        # Connectivity comes from BioStructures' residue templates, which give
-        # each residue's intra-residue bonds plus the atoms carrying bonds to
-        # adjacent residues. Deriving it from interatomic distances instead
-        # would need element-dependent cutoffs (S-H is ~1.34 Å against C-H's
-        # ~1.09 Å) and would still have to special-case geminal H pairs.
+        # Derive connectivity from residue templates, not atom distances.
         atomrow = Dict((a.ridx, String(a.aname)) => k for (k, a) in pairs(bp.atoms))
         bonds = Tuple{Int,Int}[]
         for res in ress
@@ -97,8 +122,7 @@ end
             push!(angles, (nbrs[b][ii], b, nbrs[b][jj]))
         end
 
-        # Confirm the topology actually reaches the cross-residue quartets
-        # where the documented violations live.
+        # Confirm that cross-residue bonds and angles are covered.
         crossbond(i, j) = ridx[i] != ridx[j]
         crosstriple(a, b, c) = ridx[a] != ridx[b] || ridx[b] != ridx[c]
         namematch(i, j, n1, n2) = (anames[i] == n1 && anames[j] == n2) || (anames[i] == n2 && anames[j] == n1)
@@ -109,18 +133,11 @@ end
         @test nCN == nres - 1
         @test nONC == nres - 1
         @test nCNCA == nres - 1
-        # Proline's ring nitrogen carries no amide H, so C(i)-N(i+1)-H(i+1)
-        # exists only where residue i+1 has one.
+        # Proline's ring nitrogen has no amide H.
         @test nCNH == count(i -> haskey(ress[i].atoms, "H"), 2:nres)
 
-        # ∂(bond length)/∂θ_k and ∂(bond angle)/∂θ_k for every bond, angle,
-        # and dihedral index k, from a single ForwardDiff pass over the
-        # reconstruction. Any nonzero entry is a violation of the invariance
-        # contract. These derivatives are a detector, not a magnitude: at a
-        # planar amide a misplaced H or O sits at a local extremum of its
-        # spurious rotation, so the angle derivative can read ~0.04 deg/rad
-        # while the atom itself moves ~1 Å/rad. Any nonzero entry is a bug;
-        # its size says little about how far the atom strays.
+        # Bond lengths and angles must have zero derivatives with respect to
+        # every dihedral.
         function internal_coords(dih)
             X = atomcoordinates(bp, dih, chain)
             ls = [norm(X[i] - X[j]) for (i, j) in bonds]
@@ -139,10 +156,7 @@ end
     end
 
     @testset "Degrees of freedom" begin
-        # Proline's ring (N-CA-CB-CG-CD-N) has rigid bond lengths and angles
-        # and so has no internal mobility: chi1, chi2, and phi are all fixed
-        # by the ring rather than free parameters. This is the only source of
-        # residue-count-dependent DOF loss relative to a naive per-residue count.
+        # Proline's ring fixes chi1, chi2, and phi.
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)
         specializeresnames!(struc)

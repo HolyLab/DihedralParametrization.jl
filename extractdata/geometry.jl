@@ -61,33 +61,25 @@ function residuegraph(resname::AbstractString)
     return g, mg, isbridge
 end
 
-# The remaining cases do not have any flexibility.
-# We still need to know how to add them to the growing chain
-# Parse the residue graphs to determine the bonding patterns
-#
 # Returns `(additions, phirotatable)`: `additions` is the sidechain build
 # sequence, and `phirotatable` reports whether this residue's own N-CA bond is
 # free to rotate (a bridge in the residue graph) rather than fixed by a ring.
 function parse_residue_graph(resname::AbstractString)
     rd = BioStructures.residuedata[resname]
     g, mg, isbridge = residuegraph(resname)
-    # Sort atoms into rotatable vs. inflexible sets (the rotatable will be paired with an entry in `dihedrals`)
-    # The backbone atoms are always placed first
+    # Rotatable atoms receive entries in `dihedrals`; backbone atoms come first.
     placed, inflexible = Set{Symbol}([:N, :CA, :C]), Set{Symbol}()
     for (atomname, _) in rd.atoms
         sym = Symbol(atomname)
         sym ∉ placed && push!(inflexible, sym)
     end
-    # A chi is free only if its central bond is not part of a ring: a rigid ring
-    # (fixed bond lengths and angles) has no spare mobility for its own bonds to
-    # rotate, e.g. proline's N-CA-CB-CG-CD-N ring. A pendant ring hung off a chain
-    # (e.g. Phe/Tyr/Trp/His's aromatic ring) does not constrain the exocyclic bond
-    # that attaches it, so that bond is free even though it leads into a ring.
+    # A chi is free when its central bond is a bridge in the residue graph.
     lookup = resname
     if length(lookup) == 4 && lookup[1] ∈ ('N', 'C')
         lookup = lookup[2:end]
     end
-    lookup = lookup ∈ ("HID", "HIE", "HIP") ? "HIS" : lookup   # in chitables, histidine is only cataloged once, as "HIS"
+    lookup = lookup ∈ ("HID", "HIE", "HIP") ? "HIS" : lookup
+    lookup = lookup == "CYX" ? "CYS" : lookup
     for ct in chitables
         quad = get(ct, lookup, nothing)
         quad === nothing && break
@@ -168,19 +160,9 @@ function parse_residue_graph(resname::AbstractString)
             sort!(quad[4])
         else
             a, b, c, d, tf = quad
-            # No atom of residue i is rigid with N(i) across the N-CA axis, or
-            # with C(i) across the CA-C axis: whatever residue-i atom would
-            # otherwise serve as reference co-rotates with the dihedral (φ(i) or
-            # ψ(i)) that turns about that very axis, so a same-residue reference
-            # for a FIXED dihedral there is wrong.
-            # Name the adjacent residue's atom instead, using the CHARMM `-`/`+`
-            # convention; encode.jl resolves it against the neighboring residue.
-            # A rotatable dihedral needs no such reference since the reference
-            # atom only offsets a free parameter. Chain termini have no
-            # preceding/following residue, so their N-/C-terminal variants
-            # (resname starting with 'N'/'C') keep the same-residue reference,
-            # which is correct there: residue 1 has no φ to drag CD (etc.) out
-            # of place, and symmetrically at the C-terminus.
+            # Fixed dihedrals about N-CA or CA-C need a reference in the
+            # adjacent residue; a same-residue reference would co-rotate.
+            # Terminal variants retain their same-residue reference.
             if !tf && b === :CA && c === :N && !(length(resname) == 4 && resname[1] == 'N')
                 additions[i] = (Symbol("-C"), b, c, d, tf)
             elseif !tf && b === :CA && c === :C && !(length(resname) == 4 && resname[1] == 'C')
@@ -194,24 +176,21 @@ end
 """
     nfreechis(resname::AbstractString, lookup::AbstractString=resname)
 
-Number of `chitables` entries, keyed by `lookup`, whose central bond is a
-bridge in the residue graph built from `resname`'s atoms and bonds, i.e. the
-number of genuinely free chi dihedrals. `resname` and `lookup` differ for
-histidine, whose protonation variants ("HID", "HIE", "HIP") share a single
-chitables entry keyed "HIS".
+Count chi entries whose central bond is a bridge in `resname`'s residue graph.
+Ignore entries whose target atom is absent.
 """
 function nfreechis(resname::AbstractString, lookup::AbstractString=resname)
-    _, _, isbridge = residuegraph(resname)
+    _, mg, isbridge = residuegraph(resname)
     n = 0
     for ct in chitables
         quad = get(ct, lookup, nothing)
         quad === nothing && break
-        isbridge(Symbol(quad[2]), Symbol(quad[3])) && (n += 1)
+        Symbol(quad[4]) ∈ labels(mg) && isbridge(Symbol(quad[2]), Symbol(quad[3])) && (n += 1)
     end
     return n
 end
 
-const generate_for_aas = Set(["ALA", "ARG", "ASN", "ASP", "CYS", "GLU", "GLN", "GLY", "HID", "HIE", "HIP", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL"])
+const generate_for_aas = Set(["ALA", "ARG", "ASN", "ASP", "CYS", "CYX", "GLU", "GLN", "GLY", "HID", "HIE", "HIP", "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL"])
 for aa in collect(generate_for_aas)
     push!(generate_for_aas, "N"*aa)
     push!(generate_for_aas, "C"*aa)
@@ -268,5 +247,6 @@ for (key, list) in residue_build_sequence
         offset = 1   # the added N-terminal H2 spin, or C-terminal OXT spin, is rotatable
     end
     lookup = key ∈ ("HID", "HIE", "HIP") ? "HIS" : key
+    lookup = lookup == "CYX" ? "CYS" : lookup
     @assert nflex == nfreechis(key, lookup) + offset "Mismatch in number of flexible dihedrals for residue $key0"
 end
