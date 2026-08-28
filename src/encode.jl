@@ -1,6 +1,4 @@
-# Note: encoding happens once, whereas decoding happens repeatedly during optimization.
-# Therefore, it is acceptable for encoding to be slower and more complex if it speeds up decoding.
-# Thus, the implementation here is optimized to make `atomcoordinates` as fast as possible.
+# Encoding is optimized for repeated calls to `atomcoordinates`.
 
 struct AtomData
     ridx::Int
@@ -120,10 +118,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         bbangles[3i - 1] = bondangle(cα, c, next)  # Cα - C - N(next)
         if i < nres
             push!(dihedrals, ψs[i])
-            # A ring through the N-CA bond (proline) leaves ϕ no freedom to
-            # vary: rigid ring bond lengths and angles pin it, exactly as
-            # `omegas` is pinned. Such a ϕ is carried as fixed data instead
-            # of an entry in `dihedrals`, mirroring `Extend`'s `rotatable`/`ϕ`.
+            # A ring through N-CA fixes ϕ (as in proline).
             rot = residue_phi_rotatable[resname(ress[i+1])]
             phirotatable[i+1] = rot
             phi[i+1] = ϕs[i+1]
@@ -138,6 +133,9 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     # Sidechain atoms
     for (i, res) in enumerate(ress)
         rname = resname(res)
+        # CYX is disulfide-bonded cysteine and therefore has no thiol hydrogen.
+        rname ∈ ("CYX", "NCYX", "CCYX") && haskey(res.atoms, "HG") &&
+            error("residue $i ($rname): CYX (disulfide-bonded cysteine) must not have a thiol HG")
         seq = residue_build_sequence[rname]
         atomidx = resatomidxs[i]
         steps = Vector{Union{Extend{T}, Branch{T}}}()
@@ -153,14 +151,20 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 atomB, idxB = resolvebuildref(b, i, ress, resatomidxs)
                 atomC, idxC = resolvebuildref(c, i, ress, resatomidxs)
                 predecessors = (idxA, idxB, idxC)
-                ℓcd = norm(atomC.coords - res[d].coords)
-                θbcd = bondangle(atomB, atomC, res[d])
-                ϕ = dihedralangle(atomA, atomB, atomC, res[d])
+                atomD = try
+                    res[d]
+                catch err
+                    err isa KeyError || rethrow()
+                    error("residue $i ($rname): cannot find atom \"$d\" required by residue_build_sequence")
+                end
+                ℓcd = norm(atomC.coords - atomD.coords)
+                θbcd = bondangle(atomB, atomC, atomD)
+                ϕ = dihedralangle(atomA, atomB, atomC, atomD)
                 push!(steps, Extend{T}(predecessors, ℓcd, θbcd, rotatable, ϕ))
                 if rotatable
                     push!(dihedrals, ϕ)
                 end
-                addatom(res[d])
+                addatom(atomD)
             elseif isa(step, Tuple{String,String,String,Vector{String}})
                 # Branch
                 a, b, c, ats = step

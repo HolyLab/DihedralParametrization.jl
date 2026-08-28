@@ -7,18 +7,16 @@
 [![Build Status](https://github.com/HolyLab/DihedralParametrization.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/HolyLab/DihedralParametrization.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/HolyLab/DihedralParametrization.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/HolyLab/DihedralParametrization.jl)
 
-DihedralParametrization builds models of [protein structure](https://en.wikipedia.org/wiki/Protein_structure) parametrized by their primary form of conformational flexibility: the ability of certain bonds to rotate.
-Each rotatable bond's configuration is specified by a single number, the [dihedral angle](https://en.wikipedia.org/wiki/Dihedral_angle#In_stereochemistry), also sometimes called the torsion angle.
-The most well-known angles are the backbone dihedrals `ϕ` and `ψ` often represented using [Ramachandran plots](https://en.wikipedia.org/wiki/Ramachandran_plot).
-However, most amino acids also have one or more rotatable bonds in their side chains, specified by `χ` angles.
-This package aims to offer a complete parametrization in terms of all rotatable bonds.
+DihedralParametrization represents [protein structures](https://en.wikipedia.org/wiki/Protein_structure)
+using their rotatable-bond [dihedral angles](https://en.wikipedia.org/wiki/Dihedral_angle#In_stereochemistry).
+These include the backbone angles `ϕ` and `ψ` and side-chain `χ` angles.
 
 If you are only interested in the backbone degrees of freedom, see [Backboner](https://github.com/MurrellGroup/Backboner.jl) instead.
 
 
 ## Installation
 
-DihedralParametrization is not (yet) registered. Therefore you should install it via
+DihedralParametrization is not registered. Install it with
 
 ```
 pkg> add https://github.com/HolyLab/DihedralParametrization.jl
@@ -26,22 +24,21 @@ pkg> add https://github.com/HolyLab/DihedralParametrization.jl
 
 ## Pre-requisites
 
-Someday, this package will likely permit the creation of "ideal" proteins from sequence alone, but for now the input must be a full structure as loaded by [BioStructures](https://github.com/BioJulia/BioStructures.jl) from a CIF or PDB file.
-This structure must satisfy certain constraints:
+Input must be a complete structure loaded from a CIF or PDB file by
+[BioStructures](https://github.com/BioJulia/BioStructures.jl). It must satisfy
+these constraints:
 
-- it should have hydrogens added using the Amber naming convention ([ChimeraX](https://www.cgl.ucsf.edu/chimerax/) works; many others might as well)
-- Histidine should be diambiguated as
+- Hydrogens use the Amber naming convention. [ChimeraX](https://www.cgl.ucsf.edu/chimerax/)
+  can add them.
+- Histidine is disambiguated as
   [HID/HIE/HIP](https://ambermd.org/Questions/HIS.html), and the amino- and
   carboxyl-terminal residues should have "N" and "C" prepended to their residue
   names, respectively. BioStructure's `specializeresnames!(chain)` should
-  suffice for this part (assuming you've already added hydrogens).
+  handle these names after hydrogens have been added.
 
 ## Demo
 
-The `test/data` folder of this package contains a fairly small protein structure with hydrogens added.
-This structure was computed by [AlphaFold2](https://alphafold.com/); note that small proteins are often
-stabilized by disulfide bonds, which represents a [challenge](https://pmc.ncbi.nlm.nih.gov/articles/PMC8712280/) for accurate structural prediction.
-Thus the structure should only be taken as an illustration.
+The example uses an AlphaFold2 structure from `test/data` with hydrogens added.
 
 ```julia
 julia> using DihedralParametrization, BioStructures
@@ -69,12 +66,11 @@ julia> summary(dihedrals)
 "562-element Vector{Float64}"
 ```
 
-`bp` contains "fixed" data for the protein structure: details on bond lengths, bond angles, and the dihedral angles of non-rotatable bonds.
-`dihedrals` is a vector containing the dihedral angles (in radians) for just the rotatable bonds, and represents the degrees of freedom in the protein structure.
+`bp` stores bond lengths, bond angles, and fixed dihedral angles. `dihedrals`
+stores the rotatable dihedral angles in radians.
 
-The values in `dihedrals` represent the current state of the chain `A`,
-but the key point is that you can specify a different vector (with entries ranging from -π to π) to generate a different configuration.
-Let's recreate the protein with random dihedral angles:
+Pass a different vector with entries from `-π` to `π` to generate another
+configuration:
 
 ```julia
 julia> randdh = 2π * (rand(length(dihedrals)) .- 0.5);
@@ -88,7 +84,7 @@ julia> B = buildchain(A, bp, X)
 Chain A with 112 residues, 0 other molecules, 1833 atoms
 ```
 
-We can plot it like this:
+Plot the original and generated structures:
 
 ```julia
 using GLMakie, ProtPlot
@@ -98,7 +94,5 @@ ax2 = LScene(fig[1, 2]; show_axis=false)
 ribbon!(ax1, A)
 ribbon!(ax2, B)
 ```
-
-with result
 
 ![structure comparison](docs/src/assets/randchain.png)
