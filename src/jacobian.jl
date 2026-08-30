@@ -246,3 +246,70 @@ function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVect
     end
     return δx
 end
+
+"""
+    S = vhp!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+
+Compute `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the contraction of the
+coordinate map's second derivative with a per-atom cotangent `w`, without
+forming the second-derivative tensor. `X` and `w` each have one `SVector{3}`
+entry per atom, `w[t]` playing the same role as in `jtv!`; both the second
+derivative and `S` are evaluated at the fixed configuration `X`. `S` is
+symmetric and is overwritten; it must have size `(plan.ndih, plan.ndih)`.
+Returns `S`.
+"""
+function vhp!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    _checklengths(plan, X, "X")
+    _checklengths(plan, w, "w")
+    size(S) == (plan.ndih, plan.ndih) ||
+        throw(DimensionMismatch("size(S) = $(size(S)) does not match plan's $((plan.ndih, plan.ndih)) dihedrals"))
+    fill!(S, zero(eltype(S)))
+    T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
+    S0 = fill(zero(SVector{3,T}), plan.ndih)
+    s = zeros(T, plan.ndih)
+    M = fill(zero(SMatrix{3,3,T,9}), plan.ndih)
+    for t in eachindex(X)
+        k = plan.deepest[t]
+        k == 0 && continue
+        S0[k] += w[t]
+        s[k] += dot(X[t], w[t])
+        M[k] += X[t] * w[t]'
+    end
+    # Parents precede children in build order.
+    for k = plan.ndih:-1:1
+        pk = plan.parent[k]
+        if pk != 0
+            S0[pk] += S0[k]
+            s[pk] += s[k]
+            M[pk] += M[k]
+        end
+    end
+    u = Vector{SVector{3,T}}(undef, plan.ndih)
+    p = Vector{SVector{3,T}}(undef, plan.ndih)
+    for k = 1:plan.ndih
+        u[k], p[k] = _axis(plan, X, k)
+    end
+    for j = 1:plan.ndih
+        uj, pj = u[j], p[j]
+        Tj = M[j] * uj - pj * dot(uj, S0[j]) - uj * (s[j] - dot(pj, S0[j]))
+        i = j
+        while i != 0
+            Sij = dot(u[i], Tj)
+            S[i, j] = Sij
+            S[j, i] = Sij
+            i = plan.parent[i]
+        end
+    end
+    return S
+end
+
+"""
+    S = vhp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+
+Allocating version of `vhp!`.
+"""
+function vhp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
+    S = zeros(T, plan.ndih, plan.ndih)
+    return vhp!(S, plan, X, w)
+end

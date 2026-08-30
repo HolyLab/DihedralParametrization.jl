@@ -276,6 +276,82 @@ end
         @test plancyx.ndih == length(dihedralscyx)
     end
 
+    @testset "Analytic Hessian-vector contraction" begin
+        flatten(X) = reduce(vcat, Vector.(X))
+
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        ress = collectresidues(chain)
+        n, cα, c = SVector{3}(ress[1]["N"].coords), SVector{3}(ress[1]["CA"].coords), SVector{3}(ress[1]["C"].coords)
+        bp, dihedrals = bondparametrization(chain)
+        plan = jacobianplan(bp)
+
+        rng = Random.Xoshiro(11)
+        w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
+        wf = flatten(w)
+        objective(bp, n, cα, c, w, θ) = dot(wf, flatten(atomcoordinates(bp, collect(θ), n, cα, c)))
+
+        # Native configuration.
+        X = atomcoordinates(bp, dihedrals, n, cα, c)
+        S = vhp(plan, X, w)
+        @test issymmetric(S)
+        Had = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), dihedrals)
+        devnative = maximum(abs, S .- Had)
+        @test isapprox(S, Had; rtol=1e-10)
+
+        # Perturbed configuration.
+        θpert = dihedrals .+ 0.3 .* randn(rng, length(dihedrals))
+        Xpert = atomcoordinates(bp, θpert, n, cα, c)
+        Spert = vhp(plan, Xpert, w)
+        @test issymmetric(Spert)
+        Hadpert = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), θpert)
+        devpert = maximum(abs, Spert .- Hadpert)
+        @test isapprox(Spert, Hadpert; rtol=1e-10)
+
+        # vhp! in-place matches vhp.
+        Sfilled = zeros(plan.ndih, plan.ndih)
+        vhp!(Sfilled, plan, Xpert, w)
+        @test Sfilled == Spert
+
+        # A second, independently seeded random w.
+        rng2 = Random.Xoshiro(97)
+        w2 = [randn(rng2, SVector{3,Float64}) for _ = 1:plan.natoms]
+        w2f = flatten(w2)
+        S2 = vhp(plan, Xpert, w2)
+        @test issymmetric(S2)
+        Had2 = ForwardDiff.hessian(θ -> dot(w2f, flatten(atomcoordinates(bp, collect(θ), n, cα, c))), θpert)
+        @test isapprox(S2, Had2; rtol=1e-10)
+
+        # Dimension mismatches.
+        Ssmall = zeros(plan.ndih - 1, plan.ndih - 1)
+        @test_throws DimensionMismatch vhp!(Ssmall, plan, Xpert, w)
+        Xshort = Xpert[1:end-1]
+        @test_throws DimensionMismatch vhp!(Sfilled, plan, Xshort, w)
+        wshort = w[1:end-1]
+        @test_throws DimensionMismatch vhp!(Sfilled, plan, Xpert, wshort)
+
+        # Exercise a disulfide.
+        pathcyx = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens_CYX.cif")
+        struccyx = read(pathcyx, MMCIFFormat)
+        specializeresnames!(struccyx)
+        chaincyx = only(only(struccyx))
+        bpcyx, dihedralscyx = bondparametrization(chaincyx)
+        plancyx = jacobianplan(bpcyx)
+        rescyx = collectresidues(chaincyx)
+        ncyx = SVector{3}(rescyx[1]["N"].coords)
+        cαcyx = SVector{3}(rescyx[1]["CA"].coords)
+        ccyx = SVector{3}(rescyx[1]["C"].coords)
+        Xcyx = atomcoordinates(bpcyx, dihedralscyx, ncyx, cαcyx, ccyx)
+        wcyx = [randn(rng, SVector{3,Float64}) for _ = 1:plancyx.natoms]
+        wcyxf = flatten(wcyx)
+        Scyx = vhp(plancyx, Xcyx, wcyx)
+        @test issymmetric(Scyx)
+        Hadcyx = ForwardDiff.hessian(θ -> dot(wcyxf, flatten(atomcoordinates(bpcyx, collect(θ), ncyx, cαcyx, ccyx))), dihedralscyx)
+        @test isapprox(Scyx, Hadcyx; rtol=1e-10)
+    end
+
     if testad
         @testset "Differentiability" begin
             function makef(chain)  # for copy/paste command line inferrability
