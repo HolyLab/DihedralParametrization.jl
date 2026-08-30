@@ -3,6 +3,7 @@ using BioStructures
 using StaticArrays
 using LinearAlgebra
 using ForwardDiff
+using Random
 using Test
 
 const testad = Base.VERSION.major == 1 && Base.VERSION.minor == 10
@@ -181,6 +182,174 @@ end
             i > 1 && @test !bp.phirotatable[i]
             @test !any(step -> step isa DihedralParametrization.Extend && step.rotatable, bp.residues[i].steps)
         end
+    end
+
+    @testset "Analytic Jacobian" begin
+        flatten(X) = reduce(vcat, Vector.(X))
+
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        ress = collectresidues(chain)
+        nres = length(ress)
+        bp, dihedrals = bondparametrization(chain)
+        n, cα, c = SVector{3}(ress[1]["N"].coords), SVector{3}(ress[1]["CA"].coords), SVector{3}(ress[1]["C"].coords)
+
+        plan = jacobianplan(bp)
+        @test plan.ndih == length(dihedrals)
+
+        # Compare with ForwardDiff at two configurations.
+        X = atomcoordinates(bp, dihedrals, n, cα, c)
+        J = coordinatejacobian(plan, X)
+        Jad = ForwardDiff.jacobian(θ -> flatten(atomcoordinates(bp, collect(θ), n, cα, c)), dihedrals)
+        @test isapprox(J, Jad; rtol=1e-10)
+
+        rng = Random.Xoshiro(42)
+        θpert = dihedrals .+ 0.3 .* randn(rng, length(dihedrals))
+        Xpert = atomcoordinates(bp, θpert, n, cα, c)
+        Jpert = coordinatejacobian(plan, Xpert)
+        Jadpert = ForwardDiff.jacobian(θ -> flatten(atomcoordinates(bp, collect(θ), n, cα, c)), θpert)
+        @test isapprox(Jpert, Jadpert; rtol=1e-10)
+
+        Jsmall = zeros(size(Jpert) .- 1)
+        @test_throws DimensionMismatch coordinatejacobian!(Jsmall, plan, Xpert)
+
+        # Compare products with the explicit Jacobian.
+        for _ = 1:3
+            w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
+            g = jtv!(zeros(plan.ndih), plan, Xpert, w)
+            @test isapprox(g, Jpert' * flatten(w); rtol=1e-12)
+
+            v = randn(rng, plan.ndih)
+            δx = jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms], plan, Xpert, v)
+            @test isapprox(flatten(δx), Jpert * v; rtol=1e-12)
+        end
+
+        # The first three atoms (N, Cα, C of residue 1) never move.
+        @test all(iszero, @view J[1:9, :])
+
+        # Exercise fixed proline phi.
+        prolineidx = findfirst(i -> resname(ress[i]) in ("PRO", "NPRO", "CPRO") && i > 1, 1:nres)
+        @test prolineidx !== nothing
+        @test !bp.phirotatable[prolineidx]
+
+        # Map backbone dihedrals to columns.
+        idx = 0
+        psicol = Dict{Int,Int}()
+        phicol = Dict{Int,Int}()
+        for i = 1:nres-1
+            psicol[i] = (idx += 1)
+            bp.phirotatable[i+1] && (phicol[i+1] = (idx += 1))
+        end
+
+        # A carbonyl O with a +N reference moves under psi_i.
+        atomrow = Dict((a.ridx, String(a.aname)) => k for (k, a) in pairs(bp.atoms))
+        i = findfirst(i -> haskey(atomrow, (i, "O")) && haskey(psicol, i), 1:nres-1)
+        Orows = 3 * (atomrow[(i, "O")] - 1) + 1 : 3 * atomrow[(i, "O")]
+        @test any(!iszero, J[Orows, psicol[i]])
+
+        # An amide H with a -C reference lies on the phi axis.
+        j = findfirst(j -> haskey(atomrow, (j, "H")) && haskey(phicol, j), 2:nres)
+        j = j === nothing ? nothing : j + 1
+        @test j !== nothing
+        Hrows = 3 * (atomrow[(j, "H")] - 1) + 1 : 3 * atomrow[(j, "H")]
+        @test all(iszero, J[Hrows, phicol[j]])
+
+        # Independent finite-difference check.
+        function fdcolumn(k; h=1e-6)
+            θp = copy(dihedrals); θp[k] += h
+            θm = copy(dihedrals); θm[k] -= h
+            return (flatten(atomcoordinates(bp, θp, n, cα, c)) .- flatten(atomcoordinates(bp, θm, n, cα, c))) ./ 2h
+        end
+        for k in (1, cld(plan.ndih, 2), plan.ndih)
+            @test isapprox(fdcolumn(k), J[:, k]; rtol=1e-6, atol=1e-6)
+        end
+
+        # Exercise a disulfide.
+        pathcyx = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens_CYX.cif")
+        struccyx = read(pathcyx, MMCIFFormat)
+        specializeresnames!(struccyx)
+        chaincyx = only(only(struccyx))
+        bpcyx, dihedralscyx = bondparametrization(chaincyx)
+        plancyx = jacobianplan(bpcyx)
+        @test plancyx.ndih == length(dihedralscyx)
+    end
+
+    @testset "Analytic Hessian-vector contraction" begin
+        flatten(X) = reduce(vcat, Vector.(X))
+
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        ress = collectresidues(chain)
+        n, cα, c = SVector{3}(ress[1]["N"].coords), SVector{3}(ress[1]["CA"].coords), SVector{3}(ress[1]["C"].coords)
+        bp, dihedrals = bondparametrization(chain)
+        plan = jacobianplan(bp)
+
+        rng = Random.Xoshiro(11)
+        w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
+        wf = flatten(w)
+        objective(bp, n, cα, c, w, θ) = dot(wf, flatten(atomcoordinates(bp, collect(θ), n, cα, c)))
+
+        # Native configuration.
+        X = atomcoordinates(bp, dihedrals, n, cα, c)
+        S = vhp(plan, X, w)
+        @test issymmetric(S)
+        Had = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), dihedrals)
+        devnative = maximum(abs, S .- Had)
+        @test isapprox(S, Had; rtol=1e-10)
+
+        # Perturbed configuration.
+        θpert = dihedrals .+ 0.3 .* randn(rng, length(dihedrals))
+        Xpert = atomcoordinates(bp, θpert, n, cα, c)
+        Spert = vhp(plan, Xpert, w)
+        @test issymmetric(Spert)
+        Hadpert = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), θpert)
+        devpert = maximum(abs, Spert .- Hadpert)
+        @test isapprox(Spert, Hadpert; rtol=1e-10)
+
+        # vhp! in-place matches vhp.
+        Sfilled = zeros(plan.ndih, plan.ndih)
+        vhp!(Sfilled, plan, Xpert, w)
+        @test Sfilled == Spert
+
+        # A second, independently seeded random w.
+        rng2 = Random.Xoshiro(97)
+        w2 = [randn(rng2, SVector{3,Float64}) for _ = 1:plan.natoms]
+        w2f = flatten(w2)
+        S2 = vhp(plan, Xpert, w2)
+        @test issymmetric(S2)
+        Had2 = ForwardDiff.hessian(θ -> dot(w2f, flatten(atomcoordinates(bp, collect(θ), n, cα, c))), θpert)
+        @test isapprox(S2, Had2; rtol=1e-10)
+
+        # Dimension mismatches.
+        Ssmall = zeros(plan.ndih - 1, plan.ndih - 1)
+        @test_throws DimensionMismatch vhp!(Ssmall, plan, Xpert, w)
+        Xshort = Xpert[1:end-1]
+        @test_throws DimensionMismatch vhp!(Sfilled, plan, Xshort, w)
+        wshort = w[1:end-1]
+        @test_throws DimensionMismatch vhp!(Sfilled, plan, Xpert, wshort)
+
+        # Exercise a disulfide.
+        pathcyx = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens_CYX.cif")
+        struccyx = read(pathcyx, MMCIFFormat)
+        specializeresnames!(struccyx)
+        chaincyx = only(only(struccyx))
+        bpcyx, dihedralscyx = bondparametrization(chaincyx)
+        plancyx = jacobianplan(bpcyx)
+        rescyx = collectresidues(chaincyx)
+        ncyx = SVector{3}(rescyx[1]["N"].coords)
+        cαcyx = SVector{3}(rescyx[1]["CA"].coords)
+        ccyx = SVector{3}(rescyx[1]["C"].coords)
+        Xcyx = atomcoordinates(bpcyx, dihedralscyx, ncyx, cαcyx, ccyx)
+        wcyx = [randn(rng, SVector{3,Float64}) for _ = 1:plancyx.natoms]
+        wcyxf = flatten(wcyx)
+        Scyx = vhp(plancyx, Xcyx, wcyx)
+        @test issymmetric(Scyx)
+        Hadcyx = ForwardDiff.hessian(θ -> dot(wcyxf, flatten(atomcoordinates(bpcyx, collect(θ), ncyx, cαcyx, ccyx))), dihedralscyx)
+        @test isapprox(Scyx, Hadcyx; rtol=1e-10)
     end
 
     if testad

@@ -6,9 +6,11 @@ using LinearAlgebra
 using StaticArrays
 
 export atomcoordinates, bondparametrization, buildchain
+export jacobianplan, coordinatejacobian, coordinatejacobian!, jtv!, jvp!, vhp!, vhp
 
 include("tables.jl")
 include("encode.jl")
 include("decode.jl")
+include("jacobian.jl")
 
 end
