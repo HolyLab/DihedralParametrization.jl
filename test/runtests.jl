@@ -1,5 +1,6 @@
 using DihedralParametrization
 using Aqua
+using ExplicitImports
 using BioStructures
 using StaticArrays
 using LinearAlgebra
@@ -17,6 +18,14 @@ end
 @testset "DihedralParametrization.jl" begin
     @testset "Code quality (Aqua.jl)" begin
         Aqua.test_all(DihedralParametrization)
+    end
+
+    @testset "ExplicitImports" begin
+        # The public-ness checks fall back to `isexported` before Julia 1.11,
+        # where they false-positive on `public`-but-unexported bindings.
+        test_explicit_imports(DihedralParametrization;
+                              all_explicit_imports_are_public   = VERSION >= v"1.11",
+                              all_qualified_accesses_are_public = VERSION >= v"1.11")
     end
 
     @testset "Geometry" begin
