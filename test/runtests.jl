@@ -32,8 +32,6 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
     end
 
     @testset "ExplicitImports" begin
-        # The public-ness checks fall back to `isexported` before Julia 1.11,
-        # where they false-positive on `public`-but-unexported bindings.
         test_explicit_imports(DihedralParametrization;
                               all_explicit_imports_are_public   = VERSION >= v"1.11",
                               all_qualified_accesses_are_public = VERSION >= v"1.11")
@@ -95,7 +93,6 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         specializeresnames!(struc)
         chain = only(only(struc))
 
-        # Two parametrizations of the same chain are interchangeable values.
         bp1, _ = bondparametrization(chain)
         bp2, _ = bondparametrization(chain)
         @test bp1 == bp2
@@ -112,7 +109,6 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test isequal(plan1, plan2)
         @test hash(plan1) == hash(plan2)
 
-        # Changing one step's rotatability changes the parametrization.
         steps = copy(bp1.steps)
         k = findfirst(s -> s isa DihedralParametrization.Extend && s.rotatable, steps)
         s = steps[k]
@@ -124,7 +120,6 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test steps[k] != s
         @test hash(steps[k]) != hash(s)
 
-        # A `Branch` compares by the contents of its coefficient vector.
         b = bp1.steps[findfirst(s -> s isa DihedralParametrization.Branch, bp1.steps)]
         bsame = DihedralParametrization.Branch{Float64}(b.predecessors, b.aidx, copy(b.βs))
         @test bsame == b
@@ -152,8 +147,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test norm(X[3] - X[2]) ≈ bp.ℓcac
         @test bondangle(X[1] - X[2], X[3] - X[2]) ≈ bp.θncac
 
-        # The canonical configuration is the chain-referenced one, rigidly
-        # transformed: same internal coordinates, and one rotation maps it over.
+        # The canonical and chain-based configurations differ by a rigid transform.
         Xref = atomcoordinates(bp, dihedrals, chain)
         @test dihedralangles(bp, X) ≈ dihedralangles(bp, Xref) atol=1e-8
         for k = 1:3, t in eachindex(X)
@@ -187,7 +181,6 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         chain = only(only(struc))
         bp, dihedrals = bondparametrization(chain)
 
-        # `bondparametrization` reports exactly what `dihedralangles` measures.
         @test dihedralangles(bp, chain) == dihedrals
         @test dihedralangles(bp, atomcoordinates(bp, dihedrals, chain)) ≈ dihedrals
 
@@ -215,8 +208,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         deleteat!(resshort.atom_list, findfirst(==("HB2"), resshort.atom_list))
         @test_throws "atoms but the parametrization describes" dihedralangles(bp, chainshort)
 
-        # A chain with the right atom count but an atom the parametrization
-        # cannot find: renumbering a residue moves all of its atoms.
+        # Renumbering a residue makes its atoms unavailable under their old keys.
         strucmoved = read(path, MMCIFFormat)
         specializeresnames!(strucmoved)
         chainmoved = only(only(strucmoved))
@@ -263,13 +255,11 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test chi1.atoms == (AtomKey(lysnum, :C), AtomKey(lysnum, :CA),
                              AtomKey(lysnum, :CB), AtomKey(lysnum, :CG))
 
-        # Labels are distinct and hashable.
         @test length(unique(labels)) == length(labels)
         bydihedral = Dict(labels .=> dihedrals)
         @test length(bydihedral) == length(labels)
         @test bydihedral[labels[7]] == dihedrals[7]
 
-        # The labels depend only on the build sequence, not the element type.
         bp32, _ = bondparametrization(Float32, chain)
         @test dihedrallabels(bp32) == labels
     end
@@ -309,7 +299,9 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         # traversals.
         badbp = BondParametrization{Float64}(
             bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps[1:end-1], bp.ndihedrals)
+        @test_throws ArgumentError atomcoordinates(badbp, dihedrals, chain)
         @test_throws "atoms but bp.atoms has" atomcoordinates(badbp, dihedrals, chain)
+        @test_throws ArgumentError jacobianplan(badbp)
         @test_throws "atoms but bp.atoms has" jacobianplan(badbp)
     end
 
@@ -391,11 +383,13 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         cysfree = only(filter(r -> resnumber(r) == 37, ressfree))
         @test resname(cysfree) == "CYS"
         cysfree.name = "CYX"   # CYX with HG still attached
+        @test_throws ArgumentError bondparametrization(chainfree)
         @test_throws "CYX (disulfide-bonded cysteine) must not have a thiol HG" bondparametrization(chainfree)
 
         # Missing template atoms report residue context.
         cysfree.name = "CYS"
         delete!(cysfree.atoms, "HG")
+        @test_throws ArgumentError bondparametrization(chainfree)
         @test_throws "cannot find atom \"HG\"" bondparametrization(chainfree)
     end
 
@@ -712,6 +706,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         # while the residue's own backbone is encoded.
         strucraw = read(path, MMCIFFormat)
         chainraw = only(only(strucraw))
+        @test_throws ArgumentError bondparametrization(chainraw)
         @test_throws "histidine must be disambiguated as HID/HIE/HIP" bondparametrization(chainraw)
 
         # Residue 1's name is first checked at its build-sequence lookup.
@@ -720,6 +715,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         chain1 = only(only(struc1))
         ress1 = collectresidues(chain1)
         ress1[1].name = "HIS"
+        @test_throws ArgumentError bondparametrization(chain1)
         @test_throws "residue 1 (HIS): unrecognized residue name" bondparametrization(chain1)
 
         plan = jacobianplan(bp)
@@ -734,6 +730,117 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms-1], plan, X, v)
         @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms], plan, X, v[1:end-1])
         @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms], plan, X[1:end-1], v)
+    end
+
+    @testset "Invalid input" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        function loadchain()
+            struc = read(path, MMCIFFormat)
+            specializeresnames!(struc)
+            return only(only(struc))
+        end
+        chain = loadchain()
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+
+        @test_throws ArgumentError bondparametrization(Chain("Z"))
+        @test_throws "chain has no residues" bondparametrization(Chain("Z"))
+
+        # A missing backbone atom, named with its residue.
+        let c = loadchain(), r = collectresidues(c)[12]
+            delete!(r.atoms, "N")
+            deleteat!(r.atom_list, findfirst(==("N"), r.atom_list))
+            @test_throws ArgumentError bondparametrization(c)
+            @test_throws "residue 12 (MET): missing backbone atom \"N\"" bondparametrization(c)
+        end
+        let c = loadchain(), r = collectresidues(c)[end]
+            delete!(r.atoms, "OXT")
+            deleteat!(r.atom_list, findfirst(==("OXT"), r.atom_list))
+            @test_throws ArgumentError bondparametrization(c)
+            @test_throws "missing backbone atom \"OXT\"" bondparametrization(c)
+        end
+
+        # Insertion codes make a residue number ambiguous as an atom key.
+        let c = loadchain(), r = collectresidues(c)[52]
+            r.ins_code = 'A'
+            @test_throws ArgumentError bondparametrization(c)
+            @test_throws "residue 52A (LEU): insertion codes are not supported" bondparametrization(c)
+        end
+
+        # A chain break leaves a "-"/"+" build-table reference unresolvable.
+        let c = loadchain()
+            collectresidues(c)[5].number = 1000
+            @test_throws ArgumentError bondparametrization(c)
+            @test_throws "cannot resolve build-step reference \"+N\"" bondparametrization(c)
+            @test_throws "chain break" bondparametrization(c)
+        end
+
+        # An atom the build tables never place.
+        let c = loadchain(), r = collectresidues(c)[3]
+            extra = BioStructures.Atom(9999, "XX", ' ', copy(r["CB"].coords), 1.0, 0.0, "C", "", r)
+            r.atoms["XX"] = extra
+            push!(r.atom_list, "XX")
+            @test_throws ArgumentError bondparametrization(c)
+            @test_throws "residue_build_sequence never places" bondparametrization(c)
+
+            # `buildchain` reports the same atom as unknown to `bp`.
+            @test_throws ArgumentError buildchain(c, bp, X)
+            @test_throws "which the parametrization does not describe" buildchain(c, bp, X)
+        end
+
+        @test_throws DimensionMismatch buildchain(chain, bp, X[1:end-1])
+        @test_throws DimensionMismatch buildchain(chain, bp, push!(copy(X), X[end]))
+
+        # Reference coordinates must match the geometry `bp` records.
+        n, cα, c = X[1], X[2], X[3]
+        @test_throws ArgumentError atomcoordinates(bp, dihedrals, n, cα .+ 0.5, c)
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, n, cα .+ 0.5, c)
+        @test_throws "reference Cα–C distance" atomcoordinates(bp, dihedrals, n, cα, c .+ 0.5)
+        let axis = normalize(cross(c - cα, n - cα)),
+            ctilt = cα + norm(c - cα) * normalize(normalize(c - cα) + 0.3 * axis)
+
+            @test_throws "reference N–Cα–C angle" atomcoordinates(bp, dihedrals, n, cα, ctilt)
+        end
+
+        # A step whose frame mixes independent rotation chains cannot be
+        # differentiated by the rigid-rotation formula.
+        let steps = copy(bp.steps)
+            k = findfirst(steps) do s
+                s isa DihedralParametrization.Extend && s.rotatable &&
+                    bp.atoms[s.aidx].resnum == 1 && bp.atoms[s.aidx].aname ∉ (:N, :CA, :C, :OXT)
+            end
+            s = steps[end]
+            steps[end] = DihedralParametrization.Extend{Float64}(
+                (steps[k].aidx, s.predecessors[2], s.predecessors[3]),
+                s.aidx, s.ℓcd, s.θbcd, s.rotatable, s.ϕ)
+            bpmixed = BondParametrization{Float64}(
+                bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, steps, bp.ndihedrals)
+            @test_throws ArgumentError jacobianplan(bpmixed)
+            @test_throws "mixed frame the analytic Jacobian cannot represent" jacobianplan(bpmixed)
+        end
+
+        # A `bp` that miscounts its own rotatable steps.
+        let bpcount = BondParametrization{Float64}(
+                bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps, bp.ndihedrals + 1)
+
+            @test_throws ArgumentError dihedralangles(bpcount, X)
+            @test_throws "rotatable steps but bp declares" dihedralangles(bpcount, X)
+            @test_throws "rotatable steps but bp declares" dihedrallabels(bpcount)
+            @test_throws ArgumentError jacobianplan(bpcount)
+            @test_throws "dihedral columns but bp declares" jacobianplan(bpcount)
+        end
+
+        # A `bp` whose steps are not in build order.
+        let steps = copy(bp.steps)
+            steps[end], steps[end-1] = steps[end-1], steps[end]
+            bporder = BondParametrization{Float64}(
+                bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, steps, bp.ndihedrals)
+
+            @test_throws ArgumentError atomcoordinates(bporder, dihedrals, chain)
+            @test_throws "bp.steps is out of order" atomcoordinates(bporder, dihedrals, chain)
+            @test_throws ArgumentError jacobianplan(bporder)
+            @test_throws "bp.steps is out of order" jacobianplan(bporder)
+        end
     end
 
     if testad

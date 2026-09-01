@@ -1,5 +1,3 @@
-# Encoding is optimized for repeated calls to `atomcoordinates`.
-
 """
     AtomKey
 
@@ -16,13 +14,29 @@ struct AtomKey
     aname::Symbol
 end
 function AtomKey(a::Atom)
-    aname = atomname(a)
-    return AtomKey(parse(Int, resid(residue(a); full=false)), Symbol(aname))
+    res = residue(a)
+    # An insertion code would make the residue number ambiguous as a key.
+    inscode(res) == ' ' ||
+        throw(ArgumentError("residue $(resid(res; full=false)) ($(resname(res))): insertion codes are not supported"))
+    return AtomKey(resnumber(res), Symbol(atomname(a)))
 end
 
-# Compare or hash every field of a build step, a `BondParametrization`, or a
-# `JacobianPlan`. These types own `Vector` fields, so the fallback `==`,
-# `isequal`, and `hash` would test identity rather than contents.
+# Fetch a backbone atom (N, CA, C, or the carboxyl terminus's OXT) from
+# residue `i`.
+function backboneatom(res, name::AbstractString, i::Integer)
+    haskey(res.atoms, name) ||
+        throw(ArgumentError("residue $i ($(resname(res))): missing backbone atom \"$name\""))
+    return res[name]
+end
+
+# Fetch an atom that `residue_build_sequence` names for residue `i`.
+function templateatom(res, name::AbstractString, i::Integer)
+    haskey(res.atoms, name) ||
+        throw(ArgumentError("residue $i ($(resname(res))): cannot find atom \"$name\" required by residue_build_sequence"))
+    return res[name]
+end
+
+# Compare and hash these mutable-field values by contents.
 _fieldsmatch(eq, x, y) = all(f -> eq(getfield(x, f), getfield(y, f)), fieldnames(typeof(x)))
 _hashfields(x, h::UInt) = foldr((f, h) -> hash(getfield(x, f), h), fieldnames(typeof(x)); init=h)
 
@@ -64,10 +78,9 @@ Base.hash(x::Branch, h::UInt) = _hashfields(x, hash(:Branch, h))
 """
     BondParametrization{T<:Real}
 
-Stores the fixed geometry and build sequence needed to reconstruct a protein
-chain from its rotatable dihedral angles. See `bondparametrization`,
-`atomcoordinates`, and `buildchain`. `ndihedrals(bp)` gives the required
-number of angles.
+Fixed geometry and build sequence for reconstructing a protein chain from
+its rotatable dihedral angles. See `bondparametrization`, `atomcoordinates`,
+and `buildchain`.
 
 # Fields
 - `atoms::Vector{AtomKey}`: one entry per atom, in the order
@@ -136,18 +149,12 @@ function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
         aname = ref[2:end]
         j = c1 == '-' ? i - 1 : i + 1
         ok = 1 <= j <= length(ress) && (c1 == '-' ? sequentialresidues(ress[j], ress[i]) : sequentialresidues(ress[i], ress[j]))
-        ok || error("residue $i ($(resname(ress[i]))): cannot resolve build-step reference \"$ref\" — " *
-                    (1 <= j <= length(ress) ? "residue $j is not sequential with residue $i (chain break)" :
-                     "residue $i has no " * (c1 == '-' ? "preceding" : "following") * " residue"))
-        return ress[j][aname], resatomidxs[j][aname]
+        ok || throw(ArgumentError("residue $i ($(resname(ress[i]))): cannot resolve build-step reference \"$ref\" — " *
+                                  (1 <= j <= length(ress) ? "residue $j is not sequential with residue $i (chain break)" :
+                                   "residue $i has no " * (c1 == '-' ? "preceding" : "following") * " residue")))
+        return templateatom(ress[j], aname, j), resatomidxs[j][aname]
     else
-        atom = try
-            ress[i][ref]
-        catch err
-            err isa KeyError || rethrow()
-            error("residue $i ($(resname(ress[i]))): cannot find atom \"$ref\" required by residue_build_sequence")
-        end
-        return atom, resatomidxs[i][ref]
+        return templateatom(ress[i], ref, i), resatomidxs[i][ref]
     end
 end
 
@@ -155,11 +162,9 @@ end
     dihedrals = dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     dihedrals = dihedralangles(bp::BondParametrization, chain::Chain)
 
-Measure the rotatable dihedral angles (in radians) of a configuration, the
-inverse of `atomcoordinates`. The entries are in the same order
-`atomcoordinates` consumes them, one per rotatable step of `bp.steps`, so
-`length(dihedrals) == ndihedrals(bp)`; `dihedrallabels` names the entries.
-Angles lie in `-π` to `π`.
+Measure a configuration's rotatable dihedral angles in radians. This is the
+inverse of `atomcoordinates`; `dihedrallabels` names the entries. Angles lie
+in `-π` to `π`.
 
 `X` holds one coordinate per entry of `bp.atoms`, as `atomcoordinates`
 returns; a `DimensionMismatch` is thrown if its length differs. The `Chain`
@@ -167,11 +172,7 @@ method takes the coordinates from `chain`, matched through `bp.atoms`, and
 throws an `ArgumentError` if the chain's atom count differs from `bp`'s or if
 an atom named in `bp.atoms` is absent.
 
-The element type is the `promote_type` of `bp`'s element type and the element
-type of the coordinates.
-
-`bondparametrization(chain)` returns the values `dihedralangles(bp, chain)`
-computes.
+The result promotes the element types of `bp` and the coordinates.
 """
 function dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     length(X) == length(bp.atoms) ||
@@ -185,7 +186,7 @@ function dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}}
         dihedrals[k+=1] = dihedralangle(X[b] - X[a], X[c] - X[b], X[step.aidx] - X[c])
     end
     k == ndihedrals(bp) ||
-        error("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))")
+        throw(ArgumentError("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))"))
     return dihedrals
 end
 
@@ -280,7 +281,7 @@ function dihedrallabels(bp::BondParametrization)
         labels[k+=1] = DihedralLabel(c.resnum, backbonename(a, b, c, d), (a, b, c, d))
     end
     k == ndihedrals(bp) ||
-        error("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))")
+        throw(ArgumentError("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))"))
     return labels
 end
 
@@ -300,11 +301,17 @@ object containing all other necessary information.
 The first form stores `bp`'s bond lengths, bond angles, and fixed dihedrals
 (and returns `dihedrals`) as `Float64`; pass a type explicitly, e.g.
 `bondparametrization(Float32, chain)`, to use a different real type instead.
+
+An `ArgumentError` reports a chain the build tables cannot describe: an
+empty chain, an unrecognized residue name, a residue carrying an insertion
+code, a missing backbone or side-chain atom, a chain break that leaves a
+`-`/`+` build-table reference unresolvable, or a residue with atoms the
+build tables never place.
 """
 function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     ress = collectresidues(chain)
     nres = length(ress)
-    nres >= 1 || error("chain has no residues")
+    nres >= 1 || throw(ArgumentError("chain has no residues"))
     natoms = sum(length(res) for res in ress)
     atoms = Vector{AtomKey}(undef, natoms)
     steps = Vector{Union{Extend{T},Branch{T}}}()
@@ -328,7 +335,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     previdx = (0, 0, 0)
     for (i, res) in enumerate(ress)
         empty!(atomidx)
-        n, cα, c = res["N"], res["CA"], res["C"]
+        n, cα, c = backboneatom(res, "N", i), backboneatom(res, "CA", i), backboneatom(res, "C", i)
         idxn, idxcα, idxc = addatom(n), addatom(cα), addatom(c)
         if i == 1
             ℓnca = norm(n.coords - cα.coords)
@@ -344,18 +351,14 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                                    bondangle(prevc, n, cα), false, ωs[i]))
             # C_i rotates about the N_i–Cα_i bond: φ_i. A ring through N–Cα
             # fixes φ (as in proline).
-            rot = try
-                residue_phi_rotatable[resname(res)]
-            catch err
-                err isa KeyError || rethrow()
-                error(unrecognized_residue_message(i, resname(res)))
-            end
+            rot = get(residue_phi_rotatable, resname(res), nothing)
+            rot === nothing && throw(ArgumentError(unrecognized_residue_message(i, resname(res))))
             push!(steps, Extend{T}((previdx[3], idxn, idxcα), idxc, norm(cα.coords - c.coords),
                                    bondangle(n, cα, c), rot, ϕs[i]))
         end
         if i == nres
             # OXT closes the carboxyl terminus; its dihedral is a final ψ.
-            oxt = res["OXT"]
+            oxt = backboneatom(res, "OXT", i)
             idxoxt = addatom(oxt)
             ψ′ = dihedralangle(n, cα, c, oxt)
             push!(steps, Extend{T}((idxn, idxcα, idxc), idxoxt, norm(c.coords - oxt.coords),
@@ -369,13 +372,9 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         rname = resname(res)
         # CYX is disulfide-bonded cysteine and therefore has no thiol hydrogen.
         rname ∈ ("CYX", "NCYX", "CCYX") && haskey(res.atoms, "HG") &&
-            error("residue $i ($rname): CYX (disulfide-bonded cysteine) must not have a thiol HG")
-        seq = try
-            residue_build_sequence[rname]
-        catch err
-            err isa KeyError || rethrow()
-            error(unrecognized_residue_message(i, rname))
-        end
+            throw(ArgumentError("residue $i ($rname): CYX (disulfide-bonded cysteine) must not have a thiol HG"))
+        seq = get(residue_build_sequence, rname, nothing)
+        seq === nothing && throw(ArgumentError(unrecognized_residue_message(i, rname)))
         atomidx = resatomidxs[i]
         for step in seq
             if isa(step, Tuple{String,String,String,String,Bool})
@@ -386,12 +385,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 atomB, idxB = resolvebuildref(b, i, ress, resatomidxs)
                 atomC, idxC = resolvebuildref(c, i, ress, resatomidxs)
                 predecessors = (idxA, idxB, idxC)
-                atomD = try
-                    res[d]
-                catch err
-                    err isa KeyError || rethrow()
-                    error("residue $i ($rname): cannot find atom \"$d\" required by residue_build_sequence")
-                end
+                atomD = templateatom(res, d, i)
                 ℓcd = norm(atomC.coords - atomD.coords)
                 θbcd = bondangle(atomB, atomC, atomD)
                 ϕ = dihedralangle(atomA, atomB, atomC, atomD)
@@ -400,11 +394,14 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 # Branch
                 a, b, c, ats = step
                 i == nres && length(ats) == 1 && only(ats) == "OXT" && continue # already added
+                atomA, atomB, atomC = templateatom(res, a, i), templateatom(res, b, i), templateatom(res, c, i)
+                atomsD = [templateatom(res, at, i) for at in ats]
                 predecessors = (atomidx[a], atomidx[b], atomidx[c])
-                βs = betas(a, b, c, ats, res)
+                βs = betas(SVector{3}(atomA.coords), SVector{3}(atomB.coords), SVector{3}(atomC.coords),
+                           [SVector{3}(at.coords) for at in atomsD])
                 push!(steps, Branch{T}(predecessors, aidx + 1, βs))
-                for at in ats
-                    addatom(res[at])
+                for at in atomsD
+                    addatom(at)
                 end
             else
                 error("Invalid step: $step")
@@ -422,7 +419,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 break
             end
         end
-        error("the build sequence placed $aidx atoms but the chain has $natoms$detail")
+        throw(ArgumentError("the build sequence placed $aidx atoms but the chain has $natoms$detail"))
     end
     ndih = count(step -> step isa Extend && step.rotatable, steps)
     bp = BondParametrization{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndih)
@@ -430,7 +427,6 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
 end
 bondparametrization(chain::Chain) = bondparametrization(Float64, chain)
 
-betas(a::AbstractString, b::AbstractString, c::AbstractString, ats, res) = betas(SVector{3}(res[a].coords), SVector{3}(res[b].coords), SVector{3}(res[c].coords), [SVector{3}(res[d].coords) for d in ats])
 function betas(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T}, ds) where T<:Real
     # The mirror image of add_to_middle
     ab = b - a

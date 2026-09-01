@@ -1,9 +1,8 @@
 """
     d = snnerf(a, b, c, ℓcd, θbcd, ϕbc)
 
-Given three points `a`, `b`, and `c` (as 3D vectors), the bond length `ℓcd`,
-the bond angle `θbcd` (in radians), and the dihedral angle `ϕbc` (in radians),
-compute the coordinates of point `d` using the SN-NeRF algorithm.
+Compute point `d` from three preceding points and its bond length, bond angle,
+and dihedral angle using the SN-NeRF algorithm. Angles are in radians.
 
 ## Reference
 
@@ -22,7 +21,6 @@ end
 
 function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
                 ℓcd::Real, (sθ, cθ)::Tuple{Real,Real}, (sϕ, cϕ)::Tuple{Real,Real})
-    # Calculate unit vectors
     bc = c - b
     bc = bc / norm(bc)
     ab = b - a
@@ -35,7 +33,7 @@ function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
 end
 
 function add_to_middle!(X, a::AbstractVector, b::AbstractVector, c::AbstractVector, βs)
-    # used, e.g., to place the Cβ atom in a tetrahedral geometry
+    # Place atoms such as Cβ in tetrahedral geometry.
     ab = b - a
     ab = ab / norm(ab)
     cb = b - c
@@ -62,19 +60,16 @@ Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
 and the first backbone N, Cα, and C coordinates. Results follow the order of
 `bp.atoms`.
 
-The two-argument form places the reference frame canonically: residue 1's N
-is at the origin, its Cα is on the `+x` axis at `(bp.ℓnca, 0, 0)`, and its C
-lies in the `xy` plane at positive `y`, a distance `bp.ℓcac` from Cα and
-making the angle `bp.θncac` with the N–Cα bond at Cα. Two configurations
-built this way are directly comparable, without a superposition step.
+The two-argument form places residue 1's N at the origin, Cα on the positive
+x-axis, and C in the xy-plane with positive y.
 
 `length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
-thrown otherwise. The element type of `dihedrals` is independent of the
-element type of `bp` and the reference coordinates, so automatic
-differentiation can pass dual or tangent numbers as `dihedrals` while `bp`
-stays `Float64`. `X` is a `Vector{SVector{3,R}}` with `R` the
-`promote_type` of `bp`'s element type, the element type of `dihedrals`, and
-the element type of the reference coordinates.
+thrown otherwise. Reference coordinates whose N–Cα distance, Cα–C distance,
+or N–Cα–C angle disagrees with `bp` raise an `ArgumentError`, as does a `bp`
+whose build sequence is inconsistent with its own atom and dihedral counts.
+`X` is a `Vector{SVector{3,R}}`, where `R` promotes the element types of
+`bp`, `dihedrals`, and the reference coordinates. This permits automatic
+differentiation types in `dihedrals`.
 
 # Extended help
 
@@ -88,9 +83,14 @@ function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S
     nd = ndihedrals(bp)
     length(dihedrals) == nd ||
         throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
-    norm(cα - n) ≈ bp.ℓnca || error("Provided N and Cα do not match bond length in bp")
-    norm(c - cα) ≈ bp.ℓcac || error("Provided Cα and C do not match bond length in bp")
-    bondangle(n - cα, c - cα) ≈ bp.θncac || error("Provided N, Cα, and C do not match bond angle in bp")
+    ℓnca, ℓcac = norm(cα - n), norm(c - cα)
+    θncac = bondangle(n - cα, c - cα)
+    ℓnca ≈ bp.ℓnca ||
+        throw(ArgumentError("the reference N–Cα distance is $ℓnca but bp requires $(bp.ℓnca)"))
+    ℓcac ≈ bp.ℓcac ||
+        throw(ArgumentError("the reference Cα–C distance is $ℓcac but bp requires $(bp.ℓcac)"))
+    θncac ≈ bp.θncac ||
+        throw(ArgumentError("the reference N–Cα–C angle is $θncac but bp requires $(bp.θncac)"))
 
     # Atoms 1:3 are the reference frame; `bp.steps` places all the rest.
     R = promote_type(T, S, Tref)
@@ -98,7 +98,7 @@ function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S
     idx = firstindex(dihedrals) - 1   # index of the last dihedral consumed
     for step in bp.steps
         length(X) + 1 == step.aidx ||
-            error("build step places atom $(step.aidx) but $(length(X)) atoms have been placed; bp.steps is out of order")
+            throw(ArgumentError("build step places atom $(step.aidx) but $(length(X)) atoms have been placed; bp.steps is out of order"))
         a, b, cc = X[SVector(step.predecessors)]
         if step isa Extend
             ϕ = step.rotatable ? convert(R, dihedrals[idx+=1]) : convert(R, step.ϕ)
@@ -108,10 +108,10 @@ function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S
         end
     end
     length(X) == length(bp.atoms) ||
-        error("bp.steps placed $(length(X)) atoms but bp.atoms has $(length(bp.atoms))")
+        throw(ArgumentError("bp.steps placed $(length(X)) atoms but bp.atoms has $(length(bp.atoms))"))
     nconsumed = idx - firstindex(dihedrals) + 1
     nconsumed == nd ||
-        error("bp.steps consumed $nconsumed dihedrals but bp declares $nd")
+        throw(ArgumentError("bp.steps consumed $nconsumed dihedrals but bp declares $nd"))
     return X
 end
 function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
@@ -137,15 +137,24 @@ end
 Copy `reference` and replace its atom coordinates with `X`, matched through
 `bp.atoms`. `reference` comes first because it is the template being copied
 and overwritten, like the destination argument of `copyto!`.
+
+`length(X)` must equal `length(bp.atoms)`; a `DimensionMismatch` is thrown
+otherwise. An atom of `reference` that `bp.atoms` does not name raises an
+`ArgumentError`.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    length(X) == length(bp.atoms) ||
+        throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
     out = copy(reference)
     coordidx = Dict{AtomKey, Int}()
-    for (i, akey) in enumerate(bp.atoms)
+    for (i, akey) in pairs(bp.atoms)
         coordidx[akey] = i
     end
     for a in collectatoms(out)
-        i = coordidx[AtomKey(a)]
+        akey = AtomKey(a)
+        i = get(coordidx, akey, nothing)
+        i === nothing &&
+            throw(ArgumentError("reference has atom $(akey.aname) in residue $(akey.resnum), which the parametrization does not describe"))
         a.coords .= X[i]
     end
     return out

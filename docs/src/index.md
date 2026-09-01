@@ -41,7 +41,9 @@ satisfy these constraints:
   names, respectively. BioStructures's `specializeresnames!(chain)` assigns
   these names once hydrogens have been added.
 
-`bondparametrization` reports residue names that do not meet these constraints.
+`bondparametrization` throws an `ArgumentError`, naming the residue at fault,
+for input that does not meet these constraints or that the build tables
+cannot otherwise describe.
 
 ## Demo
 

@@ -1,4 +1,4 @@
-## Analytic Jacobian of `atomcoordinates` with respect to the rotatable dihedrals.
+# Analytic derivatives of `atomcoordinates` with respect to rotatable dihedrals.
 
 # Each rotatable dihedral rotates its descendants about its frame axis:
 #
@@ -7,9 +7,8 @@
 """
     plan::JacobianPlan
 
-A reusable plan for evaluating the coordinate Jacobian ∂X/∂θ and related
-products. Construct one with `jacobianplan`; it applies to any coordinates
-produced from the same `BondParametrization`.
+A reusable plan for the coordinate Jacobian ∂X/∂θ and related products.
+Construct one with `jacobianplan`.
 
 # Fields
 - `natoms::Int`: the number of atoms in `X` (equal to `length(bp.atoms)`).
@@ -17,9 +16,9 @@ produced from the same `BondParametrization`.
   i.e. the number of Jacobian columns and the required length of `dihedrals`,
   of `v` in `jvp!`, and of `g` in `vjp!`.
 
-The remaining fields (`deepest`, `parent`, `bidx`, `cidx`) encode the
-build-order tree that `coordinatejacobian!`, `vjp!`, `jvp!`, and
-`weightedhessian!` use internally and are not intended for direct use.
+# Extended help
+
+The remaining fields encode the internal build-order tree.
 """
 struct JacobianPlan
     natoms::Int
@@ -56,11 +55,11 @@ function _framedeepest(deepest::Vector{Int}, parent::Vector{Int}, bidx::Vector{I
     for (p, dp) in ((a, da), (b, db), (c, dc))
         k = dmax
         while k != dp
-            k == 0 && error("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
-                             "(atom $p's moveset is not nested with dihedral $dmax's chain)")
+            k == 0 && throw(ArgumentError("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+                                          "(atom $p's moveset is not nested with dihedral $dmax's chain)"))
             if p != bidx[k] && p != cidx[k]
-                error("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
-                      "(atom $p lacks dihedral $k in its moveset but is not one of $k's axis atoms)")
+                throw(ArgumentError("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+                                    "(atom $p lacks dihedral $k in its moveset but is not one of $k's axis atoms)"))
             end
             k = parent[k]
         end
@@ -71,15 +70,14 @@ end
 """
     plan = jacobianplan(bp::BondParametrization)
 
-Build a reusable plan for evaluating the coordinate-map Jacobian. The plan
-may be used with any coordinates produced from the same `bp`.
+Build a derivative plan for coordinates produced from `bp`.
 
-Throws an error when a build step's frame is incompatible with the
-rigid-rotation formula.
+Throws an `ArgumentError` when a build step's frame is incompatible with the
+rigid-rotation formula, or when `bp` is internally inconsistent.
 """
 function jacobianplan(bp::BondParametrization)
     natoms = length(bp.atoms)
-    bp.nres >= 1 || error("bp must contain at least one residue")
+    bp.nres >= 1 || throw(ArgumentError("bp must contain at least one residue"))
     deepest = zeros(Int, natoms)
     parent = Int[]
     bidx = Int[]
@@ -90,7 +88,7 @@ function jacobianplan(bp::BondParametrization)
     nplaced = 3
     for step in bp.steps
         nplaced + 1 == step.aidx ||
-            error("build step places atom $(step.aidx) but $nplaced atoms have been placed; bp.steps is out of order")
+            throw(ArgumentError("build step places atom $(step.aidx) but $nplaced atoms have been placed; bp.steps is out of order"))
         a, b, c = step.predecessors
         dmax = _framedeepest(deepest, parent, bidx, cidx, a, b, c, bp, step.aidx)
         if step isa Extend
@@ -111,12 +109,12 @@ function jacobianplan(bp::BondParametrization)
         end
     end
     nplaced == natoms ||
-        error("bp.steps placed $nplaced atoms but bp.atoms has $natoms")
+        throw(ArgumentError("bp.steps placed $nplaced atoms but bp.atoms has $natoms"))
 
     ndih = length(parent)
     expected = ndihedrals(bp)
     ndih == expected ||
-        error("plan has $ndih dihedral columns but bp declares $expected rotatable dihedrals")
+        throw(ArgumentError("plan has $ndih dihedral columns but bp declares $expected rotatable dihedrals"))
 
     return JacobianPlan(natoms, ndih, deepest, parent, bidx, cidx)
 end
