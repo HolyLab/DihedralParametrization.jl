@@ -102,6 +102,7 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   layout: for `X::Vector{SVector{3,T}}`, `reinterpret(T, X)` is the
   corresponding flat vector of length `3*natoms`, and
   `reinterpret(reshape, T, X)` is the same data as a `3 × natoms` matrix.
+  Other 3-vector types are converted to `SVector{3,T}` on entry.
 
   A per-atom cotangent `w::Vector{SVector{3,T}}` flattens the same way, so
 

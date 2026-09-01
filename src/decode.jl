@@ -195,3 +195,5 @@ function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector
     end
     return out
 end
+buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:AbstractVector}) =
+    buildchain(reference, bp, svectors(X))

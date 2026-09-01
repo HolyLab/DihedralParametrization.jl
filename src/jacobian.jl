@@ -143,6 +143,7 @@ function coordinatejacobian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}})
     J = zeros(T, 3 * plan.natoms, plan.ndih)
     return coordinatejacobian!(J, plan, X)
 end
+coordinatejacobian(plan::JacobianPlan, X::AbstractVector{<:AbstractVector}) = coordinatejacobian(plan, svectors(X))
 
 """
     coordinatejacobian!(J, plan::JacobianPlan, X::AbstractVector{<:SVector{3}})
@@ -168,6 +169,9 @@ function coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractV
     end
     return J
 end
+
+coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}) =
+    coordinatejacobian!(J, plan, svectors(X))
 
 """
     g = vjp!(g, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
@@ -203,6 +207,9 @@ function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector
     return g
 end
 
+vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}) =
+    vjp!(g, plan, svectors(X), svectors(w))
+
 """
     g = vjp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
 
@@ -213,6 +220,9 @@ function vjp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVec
     g = Vector{T}(undef, plan.ndih)
     return vjp!(g, plan, X, w)
 end
+
+vjp(plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}) =
+    vjp(plan, svectors(X), svectors(w))
 
 """
     δx = jvp!(δx, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
@@ -242,6 +252,9 @@ function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVect
     return δx
 end
 
+jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, v::AbstractVector) =
+    jvp!(δx, plan, svectors(X), v)
+
 """
     δx = jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
 
@@ -252,6 +265,8 @@ function jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVec
     δx = Vector{SVector{3,T}}(undef, plan.natoms)
     return jvp!(δx, plan, X, v)
 end
+
+jvp(plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, v::AbstractVector) = jvp(plan, svectors(X), v)
 
 """
     S = weightedhessian!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
@@ -311,6 +326,9 @@ function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVect
     return S
 end
 
+weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}) =
+    weightedhessian!(S, plan, svectors(X), svectors(w))
+
 """
     S = weightedhessian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
 
@@ -321,3 +339,5 @@ function weightedhessian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w:
     S = zeros(T, plan.ndih, plan.ndih)
     return weightedhessian!(S, plan, X, w)
 end
+weightedhessian(plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}) =
+    weightedhessian(plan, svectors(X), svectors(w))

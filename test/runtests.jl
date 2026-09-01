@@ -212,6 +212,13 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws DimensionMismatch dihedralangles(bp, X[1:end-1])
         @test_throws DimensionMismatch dihedralangles(bp, push!(copy(X), X[end]))
 
+        # Other 3-vector element types are converted.
+        Xm = MVector{3}.(X)
+        @test dihedralangles(bp, Xm) == dihedralangles(bp, X)
+        @test dihedralangles!(similar(dihedrals), bp, Xm) == dihedralangles(bp, X)
+        @test dihedralangles(bp, Vector.(X)) == dihedralangles(bp, X)
+        @test_throws DimensionMismatch dihedralangles(bp, [x[1:2] for x in X])
+
         # In-place encode.
         dbuf = similar(dihedrals)
         @test dihedralangles!(dbuf, bp, X) === dbuf
@@ -597,6 +604,21 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         Jsmall = zeros(size(Jpert) .- 1)
         @test_throws DimensionMismatch coordinatejacobian!(Jsmall, plan, Xpert)
 
+        # Other 3-vector element types are converted.
+        let Xm = MVector{3}.(Xpert), rngm = Random.Xoshiro(7),
+            wm = [randn(rngm, MVector{3,Float64}) for _ = 1:natoms(plan)], vm = randn(rngm, ndihedrals(plan))
+
+            @test coordinatejacobian(plan, Xm) == Jpert
+            @test coordinatejacobian!(similar(Jpert), plan, Xm) == Jpert
+            @test vjp(plan, Xm, wm) == vjp(plan, Xpert, SVector{3}.(wm))
+            @test vjp!(zeros(ndihedrals(plan)), plan, Xpert, wm) == vjp(plan, Xpert, SVector{3}.(wm))
+            @test jvp(plan, Xm, vm) == jvp(plan, Xpert, vm)
+            @test jvp!([zero(SVector{3,Float64}) for _ = 1:natoms(plan)], plan, Xm, vm) == jvp(plan, Xpert, vm)
+            @test weightedhessian(plan, Xm, wm) == weightedhessian(plan, Xpert, SVector{3}.(wm))
+            @test weightedhessian!(zeros(ndihedrals(plan), ndihedrals(plan)), plan, Xm, wm) ==
+                  weightedhessian(plan, Xpert, SVector{3}.(wm))
+        end
+
         # Compare products with the explicit Jacobian.
         for _ = 1:3
             w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
@@ -863,6 +885,8 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             @test_throws "which the parametrization does not describe" buildchain(c, bp, X)
         end
 
+        @test [a.coords for a in collectatoms(buildchain(chain, bp, MVector{3}.(X)))] ==
+              [a.coords for a in collectatoms(buildchain(chain, bp, X))]
         @test_throws DimensionMismatch buildchain(chain, bp, X[1:end-1])
         @test_throws DimensionMismatch buildchain(chain, bp, push!(copy(X), X[end]))
 

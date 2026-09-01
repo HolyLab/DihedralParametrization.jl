@@ -204,6 +204,17 @@ function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
     end
 end
 
+# Convert coordinate elements to static 3-vectors without copying static input.
+svectors(X::AbstractVector{<:SVector{3}}) = X
+function svectors(X::AbstractVector{<:AbstractVector})
+    T = eltype(eltype(X))
+    return map(X) do x
+        length(x) == 3 ||
+            throw(DimensionMismatch("each coordinate must have 3 entries, but one has $(length(x))"))
+        SVector{3,T}(x)
+    end
+end
+
 """
     dihedrals = dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     dihedrals = dihedralangles(bp::BondParametrization, chain::Chain)
@@ -213,8 +224,9 @@ inverse of `atomcoordinates`; `dihedrallabels` names the entries. Angles lie
 in `-π` to `π`.
 
 `X` holds one coordinate per entry of `bp.atoms`, as `atomcoordinates`
-returns; a `DimensionMismatch` is thrown if its length differs. The `Chain`
-method takes the coordinates from `chain`, matched through `bp.atoms`, and
+returns; a `DimensionMismatch` is thrown if its length differs. Other
+3-vector types are converted to `SVector{3}`. The `Chain` method takes the
+coordinates from `chain`, matched through `bp.atoms`, and
 throws an `ArgumentError` if the chain's atom count differs from `bp`'s or if
 an atom named in `bp.atoms` is absent.
 
@@ -229,6 +241,7 @@ end
 function dihedralangles(bp::BondParametrization, chain::Chain)
     return dihedralangles(bp, chaincoordinates(bp, chain))
 end
+dihedralangles(bp::BondParametrization, X::AbstractVector{<:AbstractVector}) = dihedralangles(bp, svectors(X))
 
 """
     dihedralangles!(dihedrals, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
@@ -251,6 +264,8 @@ function dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::
     end
     return dihedrals
 end
+dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::AbstractVector{<:AbstractVector}) =
+    dihedralangles!(dihedrals, bp, svectors(X))
 
 # Collect `chain`'s coordinates in the order of `bp.atoms`.
 function chaincoordinates(bp::BondParametrization, chain::Chain)
