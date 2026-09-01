@@ -121,16 +121,17 @@ end
     out = buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
 
 Copy `reference` and replace its atom coordinates with `X`, matched through
-`bp.atoms`.
+`bp.atoms`. `reference` comes first because it is the template being copied
+and overwritten, like the destination argument of `copyto!`.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     out = copy(reference)
-    coordidx = Dict{AtomData, Int}()
-    for (i, adata) in enumerate(bp.atoms)
-        coordidx[adata] = i
+    coordidx = Dict{AtomKey, Int}()
+    for (i, akey) in enumerate(bp.atoms)
+        coordidx[akey] = i
     end
     for a in collectatoms(out)
-        i = coordidx[AtomData(a)]
+        i = coordidx[AtomKey(a)]
         a.coords .= X[i]
     end
     return out

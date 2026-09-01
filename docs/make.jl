@@ -7,7 +7,7 @@ makedocs(;
     modules=[DihedralParametrization],
     authors="Tim Holy <tim.holy@gmail.com> and contributors",
     sitename="DihedralParametrization.jl",
-    checkdocs=:all,
+    checkdocs=:public,
     format=Documenter.HTML(;
         canonical="https://HolyLab.github.io/DihedralParametrization.jl",
         edit_link="main",

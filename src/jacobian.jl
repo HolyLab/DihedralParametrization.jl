@@ -30,9 +30,11 @@ struct JacobianPlan
     cidx::Vector{Int}
 end
 
+Base.show(io::IO, plan::JacobianPlan) = print(io, "JacobianPlan with $(plan.natoms) atoms and $(plan.ndih) dihedrals")
+
 # Name one atom of `bp` for an error message.
 _atomdesc(bp::BondParametrization, t::Int) =
-    (a = bp.atoms[t]; "residue $(a.ridx) $(a.aname)")
+    (a = bp.atoms[t]; "residue $(a.resnum) $(a.aname)")
 
 # Describe a build step for an error message.
 _stepdesc(bp::BondParametrization, aidx::Int, predecessors::Tuple{Int,Int,Int}) =

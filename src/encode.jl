@@ -1,23 +1,23 @@
 # Encoding is optimized for repeated calls to `atomcoordinates`.
 
 """
-    AtomData
+    AtomKey
 
-Identifies one atom of a `BondParametrization` by its source residue and
-atom name.
+Identifies one atom of a `BondParametrization` by residue number and atom
+name.
 
 # Fields
-- `ridx::Int`: the residue number from the source structure (as returned by
+- `resnum::Int`: the residue number from the source structure (as returned by
   `BioStructures.resnumber`), not a position in `BondParametrization.atoms`.
 - `aname::Symbol`: the atom's name within its residue (e.g. `:CA`, `:HB2`).
 """
-struct AtomData
-    ridx::Int
+struct AtomKey
+    resnum::Int
     aname::Symbol
 end
-function AtomData(a::Atom)
+function AtomKey(a::Atom)
     aname = atomname(a)
-    return AtomData(parse(Int, resid(residue(a); full=false)), Symbol(aname))
+    return AtomKey(parse(Int, resid(residue(a); full=false)), Symbol(aname))
 end
 
 # A build step that places one atom `d` by extending the chain `a-b-c-d` with
@@ -56,7 +56,7 @@ chain from its rotatable dihedral angles. See `bondparametrization`,
 number of angles.
 
 # Fields
-- `atoms::Vector{AtomData}`: one entry per atom, in the order
+- `atoms::Vector{AtomKey}`: one entry per atom, in the order
   `atomcoordinates` returns coordinates and `buildchain` consumes them; entry
   `i` names the atom at row `i` of that coordinate vector.
 - `nres::Int`: the number of residues in the chain.
@@ -74,7 +74,7 @@ number of angles.
   length of `dihedrals`.
 """
 struct BondParametrization{T<:Real}
-    atoms::Vector{AtomData}
+    atoms::Vector{AtomKey}
     nres::Int
     ℓnca::T                       # residue 1: N–Cα bond length
     ℓcac::T                       # residue 1: Cα–C bond length
@@ -102,7 +102,7 @@ unrecognized_residue_message(i::Int, rname::AbstractString) =
     "assigns these names (see the documentation's \"Pre-requisites\" section)"
 
 """
-    resatom, ridx = resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
+    resatom, aidx = resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
 
 Resolve a build-step reference atom name `ref` for residue `ress[i]`.
 Standard names resolve within-residue. A name prefixed with `-` or `+`
@@ -180,14 +180,14 @@ function chaincoordinates(bp::BondParametrization, chain::Chain)
     chainatoms = collectatoms(chain)
     length(chainatoms) == length(bp.atoms) ||
         throw(ArgumentError("chain has $(length(chainatoms)) atoms but the parametrization describes $(length(bp.atoms))"))
-    byatomdata = Dict{AtomData,eltype(chainatoms)}()
+    byatomkey = Dict{AtomKey,eltype(chainatoms)}()
     for a in chainatoms
-        byatomdata[AtomData(a)] = a
+        byatomkey[AtomKey(a)] = a
     end
-    return map(bp.atoms) do adata
-        a = get(byatomdata, adata, nothing)
+    return map(bp.atoms) do akey
+        a = get(byatomkey, akey, nothing)
         a === nothing &&
-            throw(ArgumentError("chain has no atom $(adata.aname) in residue $(adata.ridx), which the parametrization requires"))
+            throw(ArgumentError("chain has no atom $(akey.aname) in residue $(akey.resnum), which the parametrization requires"))
         SVector{3}(a.coords)
     end
 end
@@ -199,11 +199,11 @@ Names one entry of a rotatable-dihedral vector by the atoms that define it.
 See `dihedrallabels`.
 
 # Fields
-- `resnum::Int`: the residue number (an `AtomData.ridx`) of the axis atoms
+- `resnum::Int`: the residue number (an `AtomKey.resnum`) of the axis atoms
   `b` and `c`.
 - `name::Union{Nothing,Symbol}`: `:ψ` or `:φ` for a backbone dihedral,
   `nothing` for every other rotation.
-- `atoms::NTuple{4,AtomData}`: the atoms `a`, `b`, `c`, `d` of the dihedral
+- `atoms::NTuple{4,AtomKey}`: the atoms `a`, `b`, `c`, `d` of the dihedral
   `a–b–c–d`. The rotation is about the `b–c` bond, and `d` is the atom that
   the corresponding build step places.
 
@@ -216,25 +216,25 @@ the value. The `atoms` field defines the angle exactly.
 struct DihedralLabel
     resnum::Int
     name::Union{Nothing,Symbol}
-    atoms::NTuple{4,AtomData}
+    atoms::NTuple{4,AtomKey}
 end
 
 function Base.show(io::IO, label::DihedralLabel)
     print(io, "DihedralLabel(", label.resnum, ", ", repr(label.name), ", ")
-    join(io, ("$(a.aname)($(a.ridx))" for a in label.atoms), "-")
+    join(io, ("$(a.aname)($(a.resnum))" for a in label.atoms), "-")
     print(io, ")")
 end
 
 # `:ψ` rotates about a Cα–C bond and places the next residue's N, or the
 # carboxyl terminus's OXT; `:φ` rotates about an N–Cα bond and places that
 # residue's own C. Every other rotation is unnamed.
-function backbonename(a::AtomData, b::AtomData, c::AtomData, d::AtomData)
+function backbonename(a::AtomKey, b::AtomKey, c::AtomKey, d::AtomKey)
     anames = (a.aname, b.aname, c.aname, d.aname)
-    if anames == (:N, :CA, :C, :N) && d.ridx != c.ridx
+    if anames == (:N, :CA, :C, :N) && d.resnum != c.resnum
         return :ψ
     elseif anames == (:N, :CA, :C, :OXT)
         return :ψ
-    elseif anames == (:C, :N, :CA, :C) && a.ridx != b.ridx
+    elseif anames == (:C, :N, :CA, :C) && a.resnum != b.resnum
         return :φ
     end
     return nothing
@@ -259,7 +259,7 @@ function dihedrallabels(bp::BondParametrization)
         (step isa Extend && step.rotatable) || continue
         ia, ib, ic = step.predecessors
         a, b, c, d = bp.atoms[ia], bp.atoms[ib], bp.atoms[ic], bp.atoms[step.aidx]
-        labels[k+=1] = DihedralLabel(c.ridx, backbonename(a, b, c, d), (a, b, c, d))
+        labels[k+=1] = DihedralLabel(c.resnum, backbonename(a, b, c, d), (a, b, c, d))
     end
     k == ndihedrals(bp) ||
         error("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))")
@@ -288,7 +288,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     nres = length(ress)
     nres >= 1 || error("chain has no residues")
     natoms = sum(length(res) for res in ress)
-    atoms = Vector{AtomData}(undef, natoms)
+    atoms = Vector{AtomKey}(undef, natoms)
     steps = Vector{Union{Extend{T},Branch{T}}}()
     X0 = Vector{SVector{3,Float64}}(undef, natoms)   # the chain's coordinates in `atoms` order
 
@@ -297,7 +297,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     aidx = 0
     function addatom(a::Atom)
         aidx += 1
-        atoms[aidx] = AtomData(a)
+        atoms[aidx] = AtomKey(a)
         X0[aidx] = SVector{3}(a.coords)
         atomidx[atomname(a)] = aidx
         return aidx
@@ -397,7 +397,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         placed = Set(view(atoms, 1:aidx))
         detail = ""
         for (i, res) in enumerate(ress)
-            unplaced = sort!([name for name in keys(res.atoms) if AtomData(res[name]) ∉ placed])
+            unplaced = sort!([name for name in keys(res.atoms) if AtomKey(res[name]) ∉ placed])
             if !isempty(unplaced)
                 detail = "; residue $i ($(resname(res))) has atom(s) " * join(unplaced, ", ") *
                          " that residue_build_sequence never places"

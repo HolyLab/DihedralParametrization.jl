@@ -17,7 +17,7 @@ end
 
 # Residue `resnum`'s own φ is the dihedral of the `Extend` step that places its C.
 function rotatablephi(bp, resnum)
-    k = findfirst(==(DihedralParametrization.AtomData(resnum, :C)), bp.atoms)
+    k = findfirst(==(DihedralParametrization.AtomKey(resnum, :C)), bp.atoms)
     k === nothing && error("no C atom for residue $resnum")
     j = findfirst(s -> s isa DihedralParametrization.Extend && s.aidx == k, bp.steps)
     return bp.steps[j].rotatable
@@ -62,8 +62,8 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         specializeresnames!(struc)
         bp, dihedrals = bondparametrization(chain)
         X = atomcoordinates(bp, dihedrals, chain)
-        for (i, (adata, coords)) in enumerate(zip(bp.atoms, X))
-            at = chain[adata.ridx][String(adata.aname)]
+        for (i, (akey, coords)) in enumerate(zip(bp.atoms, X))
+            at = chain[akey.resnum][String(akey.aname)]
             @test isapprox(at.coords, coords; atol=1e-8)
         end
 
@@ -73,6 +73,20 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test atomcoordinates(bp, dihedrals, n, cα, c) == X
         @test atomcoordinates(bp, dihedrals, view(n, :), SVector{3}(cα), c) == X
         @test_throws DimensionMismatch atomcoordinates(bp, dihedrals, n[1:2], cα, c)
+    end
+
+    @testset "show" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, _ = bondparametrization(chain)
+        plan = jacobianplan(bp)
+
+        @test sprint(show, bp) ==
+              "BondParametrization with $(length(bp.atoms)) atoms and $(bp.nres) residues"
+        @test sprint(show, plan) ==
+              "JacobianPlan with $(length(bp.atoms)) atoms and $(ndihedrals(bp)) dihedrals"
     end
 
     @testset "dihedralangles" begin
@@ -129,13 +143,13 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         bp, dihedrals = bondparametrization(chain)
         labels = dihedrallabels(bp)
 
-        @test length(labels) == DihedralParametrization.ndihedrals(bp)
+        @test length(labels) == ndihedrals(bp)
         @test axes(labels) == axes(dihedrals)
 
         # The first dihedral is residue 1's psi.
-        AtomData = DihedralParametrization.AtomData
+        AtomKey = DihedralParametrization.AtomKey
         @test labels[1] == DihedralParametrization.DihedralLabel(
-            1, :ψ, (AtomData(1, :N), AtomData(1, :CA), AtomData(1, :C), AtomData(2, :N)))
+            1, :ψ, (AtomKey(1, :N), AtomKey(1, :CA), AtomKey(1, :C), AtomKey(2, :N)))
         @test occursin("N(1)-CA(1)-C(1)-N(2)", sprint(show, labels[1]))
 
         # One psi per residue: nres-1 peptide psis plus the terminal OXT.
@@ -155,8 +169,8 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         lysnum = resnumber(first(filter(r -> resname(r) in ("LYS", "NLYS", "CLYS"), ress)))
         chi1 = only(filter(l -> l.resnum == lysnum && l.atoms[4].aname === :CG, labels))
         @test chi1.name === nothing
-        @test chi1.atoms == (AtomData(lysnum, :C), AtomData(lysnum, :CA),
-                             AtomData(lysnum, :CB), AtomData(lysnum, :CG))
+        @test chi1.atoms == (AtomKey(lysnum, :C), AtomKey(lysnum, :CA),
+                             AtomKey(lysnum, :CB), AtomKey(lysnum, :CG))
 
         # Labels are distinct and hashable.
         @test length(unique(labels)) == length(labels)
@@ -202,7 +216,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
 
         # A `bp` whose steps leave an atom unplaced is rejected by both
         # traversals.
-        badbp = DihedralParametrization.BondParametrization{Float64}(
+        badbp = BondParametrization{Float64}(
             bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps[1:end-1], bp.ndihedrals)
         @test_throws "atoms but bp.atoms has" atomcoordinates(badbp, dihedrals, chain)
         @test_throws "atoms but bp.atoms has" jacobianplan(badbp)
@@ -217,9 +231,9 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
 
         X = atomcoordinates(bp, dihedrals, chain)
         rebuilt = buildchain(chain, bp, X)
-        for adata in bp.atoms
-            a0 = chain[adata.ridx][String(adata.aname)]
-            a1 = rebuilt[adata.ridx][String(adata.aname)]
+        for akey in bp.atoms
+            a0 = chain[akey.resnum][String(akey.aname)]
+            a1 = rebuilt[akey.resnum][String(akey.aname)]
             @test isapprox(a0.coords, a1.coords; atol=1e-8)
         end
         _, dihedralsround = bondparametrization(rebuilt)
@@ -245,15 +259,15 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         bp, dihedrals = bondparametrization(chain)
 
         X = atomcoordinates(bp, dihedrals, chain)
-        for (adata, coords) in zip(bp.atoms, X)
-            at = chain[adata.ridx][String(adata.aname)]
+        for (akey, coords) in zip(bp.atoms, X)
+            at = chain[akey.resnum][String(akey.aname)]
             @test isapprox(at.coords, coords; atol=1e-8)
         end
 
         rebuilt = buildchain(chain, bp, X)
-        for adata in bp.atoms
-            a0 = chain[adata.ridx][String(adata.aname)]
-            a1 = rebuilt[adata.ridx][String(adata.aname)]
+        for akey in bp.atoms
+            a0 = chain[akey.resnum][String(akey.aname)]
+            a1 = rebuilt[akey.resnum][String(akey.aname)]
             @test isapprox(a0.coords, a1.coords; atol=1e-8)
         end
     end
@@ -270,12 +284,12 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
 
         bp, dihedrals = bondparametrization(chain)
         X = atomcoordinates(bp, dihedrals, chain)
-        for (adata, coords) in zip(bp.atoms, X)
-            at = chain[adata.ridx][String(adata.aname)]
+        for (akey, coords) in zip(bp.atoms, X)
+            at = chain[akey.resnum][String(akey.aname)]
             @test isapprox(at.coords, coords; atol=1e-8)
         end
         cyxridxs = Set(resnumber(r) for r in ress if resname(r) == "CYX")
-        @test !any(a -> a.ridx in cyxridxs && a.aname == :HG, bp.atoms)
+        @test !any(a -> a.resnum in cyxridxs && a.aname == :HG, bp.atoms)
 
         # CYX must not retain its thiol hydrogen.
         pathfree = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
@@ -306,17 +320,17 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         bp, dihedrals = bondparametrization(chain)
 
         X0 = atomcoordinates(bp, dihedrals, chain)
-        for (adata, coords) in zip(bp.atoms, X0)
-            at = chain[adata.ridx][String(adata.aname)]
+        for (akey, coords) in zip(bp.atoms, X0)
+            at = chain[akey.resnum][String(akey.aname)]
             @test isapprox(at.coords, coords; atol=1e-8)
         end
 
         natoms = length(X0)
         anames = [String(a.aname) for a in bp.atoms]
-        ridx = [a.ridx for a in bp.atoms]
+        resnums = [a.resnum for a in bp.atoms]
 
         # Derive connectivity from residue templates, not atom distances.
-        atomrow = Dict((a.ridx, String(a.aname)) => k for (k, a) in pairs(bp.atoms))
+        atomrow = Dict((a.resnum, String(a.aname)) => k for (k, a) in pairs(bp.atoms))
         bonds = Tuple{Int,Int}[]
         for res in ress
             rd = BioStructures.residuedata[resname(res)]
@@ -339,8 +353,8 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         end
 
         # Confirm that cross-residue bonds and angles are covered.
-        crossbond(i, j) = ridx[i] != ridx[j]
-        crosstriple(a, b, c) = ridx[a] != ridx[b] || ridx[b] != ridx[c]
+        crossbond(i, j) = resnums[i] != resnums[j]
+        crosstriple(a, b, c) = resnums[a] != resnums[b] || resnums[b] != resnums[c]
         namematch(i, j, n1, n2) = (anames[i] == n1 && anames[j] == n2) || (anames[i] == n2 && anames[j] == n1)
         nCN = count(((i, j),) -> crossbond(i, j) && namematch(i, j, "C", "N"), bonds)
         nONC = count(((a, b, c),) -> crosstriple(a, b, c) && anames[b] == "C" && namematch(a, c, "O", "N"), angles)
@@ -399,7 +413,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             i > 1 && @test !rotatablephi(bp, resnumber(ress[i]))
             @test !any(bp.steps) do step
                 step isa DihedralParametrization.Extend && step.rotatable && issidechain(bp, step) &&
-                    bp.atoms[step.aidx].ridx == resnumber(ress[i])
+                    bp.atoms[step.aidx].resnum == resnumber(ress[i])
             end
         end
     end
@@ -485,7 +499,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         end
 
         # A carbonyl O with a +N reference moves under psi_i.
-        atomrow = Dict((a.ridx, String(a.aname)) => k for (k, a) in pairs(bp.atoms))
+        atomrow = Dict((a.resnum, String(a.aname)) => k for (k, a) in pairs(bp.atoms))
         i = findfirst(i -> haskey(atomrow, (i, "O")) && haskey(psicol, i), 1:nres-1)
         Orows = 3 * (atomrow[(i, "O")] - 1) + 1 : 3 * atomrow[(i, "O")]
         @test any(!iszero, J[Orows, psicol[i]])

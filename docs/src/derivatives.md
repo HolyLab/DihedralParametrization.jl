@@ -92,8 +92,7 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
 ## Conventions
 
 - **Units.** All angles are in radians: the dihedrals passed to
-  `atomcoordinates`, the fixed values stored in `bp`, and the `θbcd`/`ϕbc`
-  arguments of `snnerf`.
+  `atomcoordinates`, and the bond angles and fixed dihedrals stored in `bp`.
 
 - **Coordinate layout.** `atomcoordinates`, `jvp!`, `vjp!`, and
   `weightedhessian!` represent a configuration as a
@@ -118,8 +117,12 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
 - **Layout and ordering of `dihedrals`.** `bp.steps` is a single build
   sequence: atoms `1:3` are residue 1's N, Cα, and C, and every later atom is
   placed by exactly one step, in the order the atoms appear in `bp.atoms`.
-  The entries of `dihedrals` (of length `ndihedrals(bp)`) correspond, in
-  order, to the rotatable `Extend` steps of that sequence.
+  A step either extends the chain `a–b–c–d` by one atom `d`, using a bond
+  length, a bond angle, and a dihedral about the `b–c` bond, or places
+  several atoms at once in a rigid local frame (the internal `Extend` and
+  `Branch` types). Only the first kind carries a `rotatable` field, and the
+  entries of `dihedrals` (of length `ndihedrals(bp)`) correspond, in order,
+  to the steps for which it is `true`.
   [`dihedralangles`](@ref) measures that vector from a set of coordinates,
   inverting `atomcoordinates`. For a chain of `nres` residues the steps run:
 
@@ -139,21 +142,22 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   [`DihedralLabel`](@ref) per entry of `dihedrals`, and hence per column of
   `J`. Each label carries the residue number of the rotation axis, the name
   `:ψ` or `:φ` for a backbone dihedral (`nothing` otherwise), and the four
-  `AtomData` values `a`, `b`, `c`, `d` of the dihedral `a–b–c–d`. Side-chain
+  `AtomKey` values `a`, `b`, `c`, `d` of the dihedral `a–b–c–d`. Side-chain
   dihedrals are unnamed because the build tables define them from reference
   atoms that need not be the IUPAC χ reference atoms — lysine's rotation
   about Cα–Cβ is measured here as C–Cα–Cβ–Cγ rather than N–Cα–Cβ–Cγ — so the
   four atoms, not a χ number, are what pin down the angle.
 
 - **Fixed vs. rotatable dihedrals.** A step whose `rotatable` field is
-  `false`, and every `Branch` step, uses geometry stored in `bp` rather than
-  an entry of `dihedrals`. Three kinds of dihedral angle are fixed this way:
+  `false`, and every step that places several atoms at once, uses geometry
+  stored in `bp` rather than an entry of `dihedrals`. Three kinds of dihedral
+  angle are fixed this way:
 
   + Every ω (the dihedral about each peptide C–N bond), held in the `ϕ`
     field of the step that places Cα.
   + φ for a residue whose ring fixes it, such as proline: the step placing
     that residue's C is marked non-rotatable and holds the fixed value.
-    Proline's ring also fixes its χ1 and χ2, which appear as non-rotatable
-    `Extend` steps rather than entries in `dihedrals`.
-  + Any other `Extend` build step marked non-rotatable, whose fixed value is
-    stored in that step's own `ϕ` field.
+    Proline's ring also fixes its χ1 and χ2, whose steps are likewise
+    non-rotatable rather than entries in `dihedrals`.
+  + Any other non-rotatable build step, whose fixed value is stored in that
+    step's own `ϕ` field.
