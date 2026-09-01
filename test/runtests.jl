@@ -937,6 +937,14 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             @test_throws "which the parametrization does not describe" buildchain(c, bp, X)
         end
 
+        # A reference lacking an atom the parametrization describes.
+        let c = loadchain(), r = collectresidues(c)[5]
+            delete!(r.atoms, "HB2")
+            deleteat!(r.atom_list, findfirst(==("HB2"), r.atom_list))
+            @test_throws ArgumentError buildchain(c, bp, X)
+            @test_throws "atoms but the parametrization describes" buildchain(c, bp, X)
+        end
+
         @test [a.coords for a in collectatoms(buildchain(chain, bp, MVector{3}.(X)))] ==
               [a.coords for a in collectatoms(buildchain(chain, bp, X))]
         @test_throws DimensionMismatch buildchain(chain, bp, X[1:end-1])

@@ -176,25 +176,31 @@ Copy `reference` and replace its atom coordinates with `X`, matched through
 and overwritten, like the destination argument of `copyto!`.
 
 `length(X)` must equal `length(bp.atoms)`; a `DimensionMismatch` is thrown
-otherwise. An atom of `reference` that `bp.atoms` does not name raises an
-`ArgumentError`. A `DisorderedAtom` has only its default alternate location
-overwritten, and a `DisorderedResidue` only its default residue.
+otherwise. An `ArgumentError` is thrown if `reference`'s atom count differs
+from `bp`'s or if an atom of `reference` is not named by `bp.atoms`. A
+`DisorderedAtom` has only its default alternate location overwritten, and a
+`DisorderedResidue` only its default residue.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     length(X) == length(bp.atoms) ||
         throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
     out = copy(reference)
+    outatoms = collectatoms(out)
     coordidx = Dict{AtomKey, Int}()
     for (i, akey) in pairs(bp.atoms)
         coordidx[akey] = i
     end
-    for a in collectatoms(out)
+    for a in outatoms
         akey = AtomKey(a)
         i = get(coordidx, akey, nothing)
         i === nothing &&
             throw(ArgumentError("reference has atom $(akey.aname) in residue $(akey.resnum), which the parametrization does not describe"))
         coords!(a, X[i])
     end
+    # Every atom of `out` is named by `bp`, so a shortfall means `reference`
+    # lacks atoms that `bp` describes.
+    length(outatoms) == length(bp.atoms) ||
+        throw(ArgumentError("reference has $(length(outatoms)) atoms but the parametrization describes $(length(bp.atoms))"))
     return out
 end
 buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:AbstractVector}) =
