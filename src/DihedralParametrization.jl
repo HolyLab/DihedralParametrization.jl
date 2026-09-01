@@ -1,12 +1,17 @@
 module DihedralParametrization
 
-using BioStructures
-using OrderedCollections
-using LinearAlgebra
-using StaticArrays
+using BioStructures: Atom, Chain, Residue, atomname, bondangle, chain, collectatoms,
+                     collectresidues, dihedralangle, inscode, omegaangles, phiangles,
+                     psiangles, resid, residue, resname, resnumber, sequentialresidues
+using LinearAlgebra: cross, dot, norm
+using StaticArrays: SMatrix, SVector
 
-export atomcoordinates, bondparametrization, buildchain
-export jacobianplan, coordinatejacobian, coordinatejacobian!, jtv!, jvp!, vhp!, vhp
+export BondParametrization, JacobianPlan
+export atomcoordinates, bondparametrization, buildchain, dihedralangles, dihedrallabels, ndihedrals
+export jacobianplan, coordinatejacobian, coordinatejacobian!, vjp, vjp!, jvp, jvp!
+export weightedhessian, weightedhessian!
+
+VERSION >= v"1.11" && eval(Meta.parse("public AtomKey, DihedralLabel"))
 
 include("tables.jl")
 include("encode.jl")

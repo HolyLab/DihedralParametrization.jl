@@ -1,4 +1,4 @@
-## Analytic Jacobian of `atomcoordinates` with respect to the rotatable dihedrals.
+# Analytic derivatives of `atomcoordinates` with respect to rotatable dihedrals.
 
 # Each rotatable dihedral rotates its descendants about its frame axis:
 #
@@ -7,8 +7,18 @@
 """
     plan::JacobianPlan
 
-A reusable plan for evaluating the coordinate-map Jacobian. Construct one
-with `jacobianplan`.
+A reusable plan for the coordinate Jacobian ∂X/∂θ and related products.
+Construct one with `jacobianplan`.
+
+# Fields
+- `natoms::Int`: the number of atoms in `X` (equal to `length(bp.atoms)`).
+- `ndih::Int`: the number of rotatable dihedrals (equal to `ndihedrals(bp)`),
+  i.e. the number of Jacobian columns and the required length of `dihedrals`,
+  of `v` in `jvp!`, and of `g` in `vjp!`.
+
+# Extended help
+
+The remaining fields encode the internal build-order tree.
 """
 struct JacobianPlan
     natoms::Int
@@ -19,21 +29,37 @@ struct JacobianPlan
     cidx::Vector{Int}
 end
 
+Base.show(io::IO, plan::JacobianPlan) = print(io, "JacobianPlan with $(plan.natoms) atoms and $(plan.ndih) dihedrals")
+
+Base.:(==)(x::JacobianPlan, y::JacobianPlan) = _fieldsmatch(==, x, y)
+Base.isequal(x::JacobianPlan, y::JacobianPlan) = _fieldsmatch(isequal, x, y)
+Base.hash(x::JacobianPlan, h::UInt) = _hashfields(x, hash(:JacobianPlan, h))
+
+# Name one atom of `bp` for an error message.
+_atomdesc(bp::BondParametrization, t::Int) =
+    (a = bp.atoms[t]; "residue $(a.resnum) $(a.aname)")
+
+# Describe a build step for an error message.
+_stepdesc(bp::BondParametrization, aidx::Int, predecessors::Tuple{Int,Int,Int}) =
+    "placing $(_atomdesc(bp, aidx)) from " *
+    join((_atomdesc(bp, p) for p in predecessors), ", ")
+
 # Return the deepest dihedral moving the frame, checking that its movesets
-# are nested and that omitted dihedrals rotate about a frame atom.
+# are nested and that omitted dihedrals rotate about a frame atom. The
+# description of the offending step is built only when an error is raised.
 function _framedeepest(deepest::Vector{Int}, parent::Vector{Int}, bidx::Vector{Int}, cidx::Vector{Int},
-                        a::Int, b::Int, c::Int, desc::AbstractString)
+                       a::Int, b::Int, c::Int, bp::BondParametrization, aidx::Int)
     da, db, dc = deepest[a], deepest[b], deepest[c]
     dmax = max(da, db, dc)
     dmax == 0 && return 0
     for (p, dp) in ((a, da), (b, db), (c, dc))
         k = dmax
         while k != dp
-            k == 0 && error("$desc: coordinate map has a mixed frame the analytic Jacobian cannot represent " *
-                             "(atom $p's moveset is not nested with dihedral $dmax's chain)")
+            k == 0 && throw(ArgumentError("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+                                          "(atom $p's moveset is not nested with dihedral $dmax's chain)"))
             if p != bidx[k] && p != cidx[k]
-                error("$desc: coordinate map has a mixed frame the analytic Jacobian cannot represent " *
-                      "(atom $p lacks dihedral $k in its moveset but is not one of $k's axis atoms)")
+                throw(ArgumentError("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+                                    "(atom $p lacks dihedral $k in its moveset but is not one of $k's axis atoms)"))
             end
             k = parent[k]
         end
@@ -44,93 +70,51 @@ end
 """
     plan = jacobianplan(bp::BondParametrization)
 
-Build a reusable plan for evaluating the coordinate-map Jacobian. The plan
-may be used with any coordinates produced from the same `bp`.
+Build a derivative plan for coordinates produced from `bp`.
 
-Throws an error when a build step's frame is incompatible with the
-rigid-rotation formula.
+Throws an `ArgumentError` when a build step's frame is incompatible with the
+rigid-rotation formula, or when `bp` is internally inconsistent.
 """
 function jacobianplan(bp::BondParametrization)
     natoms = length(bp.atoms)
-    nres = length(bp.residues)
+    bp.nres >= 1 || throw(ArgumentError("bp must contain at least one residue"))
     deepest = zeros(Int, natoms)
     parent = Int[]
     bidx = Int[]
     cidx = Int[]
 
-    function newdihedral!(b::Int, c::Int, dmax::Int)
-        push!(parent, dmax)
-        push!(bidx, b)
-        push!(cidx, c)
-        return length(parent)
-    end
-
-    # Fixed N, Cα, C reference frame.
-    aidx = 3
-    nres >= 1 || error("bp must contain at least one residue")
-    prev3, prev2, prev1 = 1, 2, 3
-    for i = 2:nres
-        # N_i: ψ_{i-1} about Cα_{i-1}–C_{i-1}.
-        dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "residue $i N (ψ_$(i-1))")
-        aidx += 1
-        k = newdihedral!(prev2, prev1, dmax)
-        deepest[aidx] = k
-        prev3, prev2, prev1 = prev2, prev1, aidx
-        # Cα_i: fixed ω_{i-1}.
-        dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "residue $i Cα (ω)")
-        aidx += 1
-        deepest[aidx] = dmax
-        prev3, prev2, prev1 = prev2, prev1, aidx
-        # C_i: φ_i about N_i–Cα_i when rotatable.
-        dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "residue $i C (φ_$i)")
-        aidx += 1
-        if bp.phirotatable[i]
-            k = newdihedral!(prev2, prev1, dmax)
-            deepest[aidx] = k
-        else
-            deepest[aidx] = dmax
-        end
-        prev3, prev2, prev1 = prev2, prev1, aidx
-    end
-    # OXT: final ψ′ about Cα_nres–C_nres.
-    dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "OXT (ψ′)")
-    aidx += 1
-    k = newdihedral!(prev2, prev1, dmax)
-    deepest[aidx] = k
-
-    for (i, r) in enumerate(bp.residues)
-        for step in r.steps
-            a, b, c = step.predecessors
-            if step isa Extend
-                dmax = _framedeepest(deepest, parent, bidx, cidx, a, b, c,
-                                      "residue $i sidechain Extend $(step.predecessors)")
-                aidx += 1
-                if step.rotatable
-                    k = newdihedral!(b, c, dmax)
-                    deepest[aidx] = k
-                else
-                    deepest[aidx] = dmax
-                end
-            elseif step isa Branch
-                dmax = _framedeepest(deepest, parent, bidx, cidx, a, b, c,
-                                      "residue $i sidechain Branch $(step.predecessors)")
-                for _ = 1:length(step.βs)
-                    aidx += 1
-                    deepest[aidx] = dmax
-                end
+    # Atoms 1:3 are the fixed N, Cα, C reference frame; the rest follow
+    # `bp.steps`, exactly as in `atomcoordinates`.
+    nplaced = 3
+    for step in bp.steps
+        nplaced + 1 == step.aidx ||
+            throw(ArgumentError("build step places atom $(step.aidx) but $nplaced atoms have been placed; bp.steps is out of order"))
+        a, b, c = step.predecessors
+        dmax = _framedeepest(deepest, parent, bidx, cidx, a, b, c, bp, step.aidx)
+        if step isa Extend
+            nplaced += 1
+            if step.rotatable
+                push!(parent, dmax)
+                push!(bidx, b)
+                push!(cidx, c)
+                deepest[step.aidx] = length(parent)
             else
-                error("residue $i: unrecognized build step $step")
+                deepest[step.aidx] = dmax
+            end
+        else
+            for j in eachindex(step.βs)
+                nplaced += 1
+                deepest[step.aidx + j - firstindex(step.βs)] = dmax
             end
         end
     end
-    aidx == natoms || error("built $aidx atoms but bp.atoms has $natoms; traversal does not match atomcoordinates")
+    nplaced == natoms ||
+        throw(ArgumentError("bp.steps placed $nplaced atoms but bp.atoms has $natoms"))
 
     ndih = length(parent)
-    nphi_free = count(view(bp.phirotatable, 2:nres))
-    nsidechain_free = sum((count(step -> step isa Extend && step.rotatable, r.steps) for r in bp.residues); init=0)
-    expected = (nres - 1) + nphi_free + 1 + nsidechain_free
-    ndih == expected || error("plan has $ndih dihedral columns but atomcoordinates would consume $expected; " *
-                               "traversal does not match atomcoordinates")
+    expected = ndihedrals(bp)
+    ndih == expected ||
+        throw(ArgumentError("plan has $ndih dihedral columns but bp declares $expected rotatable dihedrals"))
 
     return JacobianPlan(natoms, ndih, deepest, parent, bidx, cidx)
 end
@@ -153,6 +137,10 @@ end
 Compute ∂X/∂θ as a dense `3 * length(X) × plan.ndih` matrix. The rows for
 atom `t` are `3(t-1)+1:3t`. `X` must have been produced from the same bond
 parametrization as `plan`.
+
+A coordinate list `Y::Vector{SVector{3,T}}` corresponds to the flat vector
+`reinterpret(T, Y)`, so `J * v` matches `reinterpret(T, jvp(plan, X, v))`
+and `J' * reinterpret(T, w)` matches `vjp(plan, X, w)`.
 """
 function coordinatejacobian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}})
     T = eltype(eltype(X))
@@ -186,12 +174,12 @@ function coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractV
 end
 
 """
-    g = jtv!(g, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    g = vjp!(g, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
 
 Compute `g = J' * w` without forming `J`, where `J = ∂X/∂θ`. `w[t]` is the
 weight for atom `t`. Returns `g`.
 """
-function jtv!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     length(g) == plan.ndih || throw(DimensionMismatch("length(g) = $(length(g)) does not match plan's $(plan.ndih) dihedrals"))
@@ -217,6 +205,17 @@ function jtv!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector
         g[k] = dot(u, S1[k] - cross(p, S0[k]))
     end
     return g
+end
+
+"""
+    g = vjp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+
+Allocating version of `vjp!`.
+"""
+function vjp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
+    g = Vector{T}(undef, plan.ndih)
+    return vjp!(g, plan, X, w)
 end
 
 """
@@ -248,17 +247,30 @@ function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVect
 end
 
 """
-    S = vhp!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    δx = jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
 
-Compute `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the contraction of the
-coordinate map's second derivative with a per-atom cotangent `w`, without
-forming the second-derivative tensor. `X` and `w` each have one `SVector{3}`
-entry per atom, `w[t]` playing the same role as in `jtv!`; both the second
-derivative and `S` are evaluated at the fixed configuration `X`. `S` is
-symmetric and is overwritten; it must have size `(plan.ndih, plan.ndih)`.
-Returns `S`.
+Allocating version of `jvp!`.
 """
-function vhp!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
+    T = promote_type(eltype(eltype(X)), eltype(v))
+    δx = Vector{SVector{3,T}}(undef, plan.natoms)
+    return jvp!(δx, plan, X, v)
+end
+
+"""
+    S = weightedhessian!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+
+Compute `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the Hessian with respect to
+the dihedrals θ of the scalar `Σ_a w[a] ⋅ X[a](θ)`, evaluated at the
+configuration `X`. This is not a Hessian-vector product: `S` is the full
+`ndih × ndih` Hessian of `w ⋅ X`, computed without forming the coordinate
+map's second-derivative tensor.
+
+`X` and `w` each have one `SVector{3}` entry per atom, `w[t]` playing the
+same role as in `vjp!`. `S` is symmetric and is overwritten; it must have
+size `(plan.ndih, plan.ndih)`. Returns `S`.
+"""
+function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     size(S) == (plan.ndih, plan.ndih) ||
@@ -304,12 +316,12 @@ function vhp!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector
 end
 
 """
-    S = vhp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    S = weightedhessian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
 
-Allocating version of `vhp!`.
+Allocating version of `weightedhessian!`.
 """
-function vhp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function weightedhessian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
     T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
     S = zeros(T, plan.ndih, plan.ndih)
-    return vhp!(S, plan, X, w)
+    return weightedhessian!(S, plan, X, w)
 end

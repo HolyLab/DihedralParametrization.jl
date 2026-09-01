@@ -1,9 +1,8 @@
 """
     d = snnerf(a, b, c, ℓcd, θbcd, ϕbc)
 
-Given three points `a`, `b`, and `c` (as 3D vectors), the bond length `ℓcd`,
-the bond angle `θbcd` (in radians), and the dihedral angle `ϕbc` (in radians),
-compute the coordinates of point `d` using the SN-NeRF algorithm.
+Compute point `d` from three preceding points and its bond length, bond angle,
+and dihedral angle using the SN-NeRF algorithm. Angles are in radians.
 
 ## Reference
 
@@ -22,9 +21,8 @@ end
 
 function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
                 ℓcd::Real, (sθ, cθ)::Tuple{Real,Real}, (sϕ, cϕ)::Tuple{Real,Real})
-    # Calculate unit vectors
     bc = c - b
-    bc = bc / norm(bc)    # technically, SN-NeRF wants us to pass `norm(bc)` in as an argument
+    bc = bc / norm(bc)
     ab = b - a
     n = cross(ab, bc)
     n = n / norm(n)
@@ -35,7 +33,7 @@ function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
 end
 
 function add_to_middle!(X, a::AbstractVector, b::AbstractVector, c::AbstractVector, βs)
-    # used, e.g., to place the Cβ atom in a tetrahedral geometry
+    # Place atoms such as Cβ in tetrahedral geometry.
     ab = b - a
     ab = ab / norm(ab)
     cb = b - c
@@ -53,71 +51,82 @@ add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs) =
     add_to_middle!(promote_type(typeof(a), typeof(b), typeof(c))[], a, b, c, βs)
 
 """
-    X = atomcoordinates(bp::BondParametrization{T}, dihedrals::Vector{T}, n::AbstractVector{T}, cα::AbstractVector{T}, c::AbstractVector{T}) where T<:Real
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::Atom, cα::Atom, c::Atom)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector)
 
-Given a `BondParametrization` object `bp`, a vector of dihedral angles `dihedrals`,
-and the coordinates of the first three backbone atoms in the chain (`n`, `cα`, and `c`),
-compute the 3D coordinates of all atoms in the chain.
+Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
+and the first backbone N, Cα, and C coordinates. Results follow the order of
+`bp.atoms`.
+
+The two-argument form places residue 1's N at the origin, Cα on the positive
+x-axis, and C in the xy-plane with positive y.
+
+`length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
+thrown otherwise. Reference coordinates whose N–Cα distance, Cα–C distance,
+or N–Cα–C angle disagrees with `bp` raise an `ArgumentError`, as does a `bp`
+whose build sequence is inconsistent with its own atom and dihedral counts.
+`X` is a `Vector{SVector{3,R}}`, where `R` promotes the element types of
+`bp`, `dihedrals`, and the reference coordinates. This permits automatic
+differentiation types in `dihedrals`.
+
+# Extended help
+
+Reference coordinates are converted to `SVector{3,T}` using their promoted
+element type. The `Atom` method reads `coords`; the `Chain` method uses the
+first residue's N, CA, and C atoms.
 """
-function atomcoordinates(bp::BondParametrization, dihedrals::Vector{S}, n::SVector{3,T}, cα::SVector{3,T}, c::SVector{3,T}) where {S<:Real, T<:Real}
+function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S},
+                         n::SVector{3,Tref}, cα::SVector{3,Tref}, c::SVector{3,Tref}) where {T<:Real, S<:Real, Tref<:Real}
     # Check that the inputs are consistent with `bp`
-    norm(cα - n) ≈ bp.bblengths[1] || error("Provided N and Cα do not match bond length in bp")
-    norm(c - cα) ≈ bp.bblengths[2] || error("Provided Cα and C do not match bond length in bp")
-    bondangle(n - cα, c - cα) ≈ bp.bbangles[1] || error("Provided N, Cα, and C do not match bond angle in bp")
+    nd = ndihedrals(bp)
+    length(dihedrals) == nd ||
+        throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
+    ℓnca, ℓcac = norm(cα - n), norm(c - cα)
+    θncac = bondangle(n - cα, c - cα)
+    ℓnca ≈ bp.ℓnca ||
+        throw(ArgumentError("the reference N–Cα distance is $ℓnca but bp requires $(bp.ℓnca)"))
+    ℓcac ≈ bp.ℓcac ||
+        throw(ArgumentError("the reference Cα–C distance is $ℓcac but bp requires $(bp.ℓcac)"))
+    θncac ≈ bp.θncac ||
+        throw(ArgumentError("the reference N–Cα–C angle is $θncac but bp requires $(bp.θncac)"))
 
-    # Initialize the coordinates array
-    X = sizehint!(SVector{3,promote_type(S, T)}[n, cα, c], length(bp.atoms))
-    idx = 0  # index into dihedrals vector
-    # Connect the backbone
-    prev3, prev2, prev1 = n, cα, c
-    nres = length(bp.residues)
-    for i = 2:nres
-        # add the next N
-        ψ = dihedrals[idx+=1]       # rotatable
-        ℓ = bp.bblengths[3*i - 3]
-        θ = bp.bbangles[3*i - 4]
-        d = snnerf(prev3, prev2, prev1, ℓ, θ, ψ)
-        push!(X, d)
-        prev3, prev2, prev1 = prev2, prev1, d
-        # add the next Cα
-        ω = bp.omegas[i - 1]
-        ℓ = bp.bblengths[3*i - 2]
-        θ = bp.bbangles[3*i - 3]
-        d = snnerf(prev3, prev2, prev1, ℓ, θ, ω)
-        push!(X, d)
-        prev3, prev2, prev1 = prev2, prev1, d
-        # add the next C
-        φ = bp.phirotatable[i] ? dihedrals[idx+=1] : bp.phi[i]
-        ℓ = bp.bblengths[3*i - 1]
-        θ = bp.bbangles[3*i - 2]
-        d = snnerf(prev3, prev2, prev1, ℓ, θ, φ)
-        push!(X, d)
-        prev3, prev2, prev1 = prev2, prev1, d
-    end
-    # add a terminal O
-    ψ′ = dihedrals[idx+=1]  # for placement of OXT
-    ℓ = bp.bblengths[end]
-    θ = bp.bbangles[end]
-    d = snnerf(prev3, prev2, prev1, ℓ, θ, ψ′)
-    push!(X, d)
-    for (i, r) in enumerate(bp.residues)
-        for step in r.steps
-            if step isa Extend{T}
-                a, b, c = X[SVector(step.predecessors)]
-                ϕ = step.rotatable ? dihedrals[idx+=1] : step.ϕ
-                d = snnerf(a, b, c, step.ℓcd, step.θbcd, ϕ)
-                push!(X, d)
-            elseif step isa Branch{T}
-                a, b, c = X[SVector(step.predecessors)]
-                d = add_to_middle!(X, a, b, c, step.βs)
-            end
+    # Atoms 1:3 are the reference frame; `bp.steps` places all the rest.
+    R = promote_type(T, S, Tref)
+    X = sizehint!(SVector{3,R}[n, cα, c], length(bp.atoms))
+    idx = firstindex(dihedrals) - 1   # index of the last dihedral consumed
+    for step in bp.steps
+        length(X) + 1 == step.aidx ||
+            throw(ArgumentError("build step places atom $(step.aidx) but $(length(X)) atoms have been placed; bp.steps is out of order"))
+        a, b, cc = X[SVector(step.predecessors)]
+        if step isa Extend
+            ϕ = step.rotatable ? convert(R, dihedrals[idx+=1]) : convert(R, step.ϕ)
+            push!(X, snnerf(a, b, cc, step.ℓcd, step.θbcd, ϕ))
+        else
+            add_to_middle!(X, a, b, cc, step.βs)
         end
     end
-    @assert length(X) == length(bp.atoms)
+    length(X) == length(bp.atoms) ||
+        throw(ArgumentError("bp.steps placed $(length(X)) atoms but bp.atoms has $(length(bp.atoms))"))
+    nconsumed = idx - firstindex(dihedrals) + 1
+    nconsumed == nd ||
+        throw(ArgumentError("bp.steps consumed $nconsumed dihedrals but bp declares $nd"))
     return X
 end
-atomcoordinates(bp::BondParametrization, dihedrals::Vector, n::Atom, cα::Atom, c::Atom) = atomcoordinates(bp, dihedrals, SVector{3}(n.coords), SVector{3}(cα.coords), SVector{3}(c.coords))
-function atomcoordinates(bp::BondParametrization, dihedrals::Vector, chain::Chain)
+function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
+    T = promote_type(eltype(n), eltype(cα), eltype(c))
+    return atomcoordinates(bp, dihedrals, SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
+end
+atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::Atom, cα::Atom, c::Atom) = atomcoordinates(bp, dihedrals, n.coords, cα.coords, c.coords)
+function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector) where {T<:Real}
+    sθ, cθ = sincos(bp.θncac)
+    n = zero(SVector{3,T})
+    cα = SVector{3,T}(bp.ℓnca, zero(T), zero(T))
+    c = SVector{3,T}(bp.ℓnca - bp.ℓcac * cθ, bp.ℓcac * sθ, zero(T))
+    return atomcoordinates(bp, dihedrals, n, cα, c)
+end
+function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
     nter = first(chain)::Residue
     return atomcoordinates(bp, dihedrals, nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom)
 end
@@ -125,18 +134,27 @@ end
 """
     out = buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
 
-Given a reference `Chain` object, a `BondParametrization` object `bp`, and a
-vector of atom 3D coordinates `X`, construct a new `Chain` object with the same
-sequence and atoms as `reference` but with the coordinates from `X`.
+Copy `reference` and replace its atom coordinates with `X`, matched through
+`bp.atoms`. `reference` comes first because it is the template being copied
+and overwritten, like the destination argument of `copyto!`.
+
+`length(X)` must equal `length(bp.atoms)`; a `DimensionMismatch` is thrown
+otherwise. An atom of `reference` that `bp.atoms` does not name raises an
+`ArgumentError`.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    length(X) == length(bp.atoms) ||
+        throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
     out = copy(reference)
-    coordidx = Dict{AtomData, Int}()
-    for (i, adata) in enumerate(bp.atoms)
-        coordidx[adata] = i
+    coordidx = Dict{AtomKey, Int}()
+    for (i, akey) in pairs(bp.atoms)
+        coordidx[akey] = i
     end
     for a in collectatoms(out)
-        i = coordidx[AtomData(a)]
+        akey = AtomKey(a)
+        i = get(coordidx, akey, nothing)
+        i === nothing &&
+            throw(ArgumentError("reference has atom $(akey.aname) in residue $(akey.resnum), which the parametrization does not describe"))
         a.coords .= X[i]
     end
     return out
