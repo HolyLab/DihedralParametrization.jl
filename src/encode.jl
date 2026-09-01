@@ -85,6 +85,8 @@ end
 
 Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(bp.nres) residues")
 
+Base.eltype(::Type{BondParametrization{T}}) where {T} = T
+
 """
     n = ndihedrals(bp::BondParametrization)
 
@@ -132,6 +134,64 @@ function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
 end
 
 """
+    dihedrals = dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    dihedrals = dihedralangles(bp::BondParametrization, chain::Chain)
+
+Measure the rotatable dihedral angles (in radians) of a configuration, the
+inverse of `atomcoordinates`. The entries are in the same order
+`atomcoordinates` consumes them, one per rotatable step of `bp.steps`, so
+`length(dihedrals) == ndihedrals(bp)`. Angles lie in `-π` to `π`.
+
+`X` holds one coordinate per entry of `bp.atoms`, as `atomcoordinates`
+returns; a `DimensionMismatch` is thrown if its length differs. The `Chain`
+method takes the coordinates from `chain`, matched through `bp.atoms`, and
+throws an `ArgumentError` if the chain's atom count differs from `bp`'s or if
+an atom named in `bp.atoms` is absent.
+
+The element type is the `promote_type` of `bp`'s element type and the element
+type of the coordinates.
+
+`bondparametrization(chain)` returns the values `dihedralangles(bp, chain)`
+computes.
+"""
+function dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    length(X) == length(bp.atoms) ||
+        throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
+    R = promote_type(eltype(bp), eltype(eltype(X)))
+    dihedrals = Vector{R}(undef, ndihedrals(bp))
+    k = 0
+    for step in bp.steps
+        (step isa Extend && step.rotatable) || continue
+        a, b, c = step.predecessors
+        dihedrals[k+=1] = dihedralangle(X[b] - X[a], X[c] - X[b], X[step.aidx] - X[c])
+    end
+    k == ndihedrals(bp) ||
+        error("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))")
+    return dihedrals
+end
+
+function dihedralangles(bp::BondParametrization, chain::Chain)
+    return dihedralangles(bp, chaincoordinates(bp, chain))
+end
+
+# Collect `chain`'s coordinates in the order of `bp.atoms`.
+function chaincoordinates(bp::BondParametrization, chain::Chain)
+    chainatoms = collectatoms(chain)
+    length(chainatoms) == length(bp.atoms) ||
+        throw(ArgumentError("chain has $(length(chainatoms)) atoms but the parametrization describes $(length(bp.atoms))"))
+    byatomdata = Dict{AtomData,eltype(chainatoms)}()
+    for a in chainatoms
+        byatomdata[AtomData(a)] = a
+    end
+    return map(bp.atoms) do adata
+        a = get(byatomdata, adata, nothing)
+        a === nothing &&
+            throw(ArgumentError("chain has no atom $(adata.aname) in residue $(adata.ridx), which the parametrization requires"))
+        SVector{3}(a.coords)
+    end
+end
+
+"""
     bp, dihedrals = bondparametrization(chain)
     bp, dihedrals = bondparametrization(T, chain)
 
@@ -140,8 +200,9 @@ Represent a protein `chain` by fixed bond parameters `bp` and its rotatable
 
 `dihedrals` is a vector representing the rotatable dihedral angles (in
 radians) in the chain, in the order documented in [Conventions](@ref);
-`ndihedrals` gives its length. `bp` is a `BondParametrization` object
-containing all other necessary information.
+`ndihedrals` gives its length. It is what `dihedralangles(bp, chain)`
+measures. `bp` is a `BondParametrization` object containing all other
+necessary information.
 
 The first form stores `bp`'s bond lengths, bond angles, and fixed dihedrals
 (and returns `dihedrals`) as `Float64`; pass a type explicitly, e.g.
@@ -154,7 +215,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     natoms = sum(length(res) for res in ress)
     atoms = Vector{AtomData}(undef, natoms)
     steps = Vector{Union{Extend{T},Branch{T}}}()
-    dihedrals = T[]
+    X0 = Vector{SVector{3,Float64}}(undef, natoms)   # the chain's coordinates in `atoms` order
 
     atomidx = Dict{String,Int}()
     resatomidxs = Vector{typeof(atomidx)}(undef, nres)
@@ -162,6 +223,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     function addatom(a::Atom)
         aidx += 1
         atoms[aidx] = AtomData(a)
+        X0[aidx] = SVector{3}(a.coords)
         atomidx[atomname(a)] = aidx
         return aidx
     end
@@ -184,7 +246,6 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
             # N_i rotates about the Cα_{i-1}–C_{i-1} bond: ψ_{i-1}.
             push!(steps, Extend{T}(previdx, idxn, norm(prevc.coords - n.coords),
                                    bondangle(prevcα, prevc, n), true, ψs[i-1]))
-            push!(dihedrals, ψs[i-1])
             # Cα_i is fixed by the peptide bond's ω.
             push!(steps, Extend{T}((previdx[2], previdx[3], idxn), idxcα, norm(n.coords - cα.coords),
                                    bondangle(prevc, n, cα), false, ωs[i]))
@@ -198,7 +259,6 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
             end
             push!(steps, Extend{T}((previdx[3], idxn, idxcα), idxc, norm(cα.coords - c.coords),
                                    bondangle(n, cα, c), rot, ϕs[i]))
-            rot && push!(dihedrals, ϕs[i])
         end
         if i == nres
             # OXT closes the carboxyl terminus; its dihedral is a final ψ.
@@ -207,7 +267,6 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
             ψ′ = dihedralangle(n, cα, c, oxt)
             push!(steps, Extend{T}((idxn, idxcα, idxc), idxoxt, norm(c.coords - oxt.coords),
                                    bondangle(cα, c, oxt), true, ψ′))
-            push!(dihedrals, ψ′)
         end
         previdx = (idxn, idxcα, idxc)
         resatomidxs[i] = copy(atomidx)
@@ -244,9 +303,6 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 θbcd = bondangle(atomB, atomC, atomD)
                 ϕ = dihedralangle(atomA, atomB, atomC, atomD)
                 push!(steps, Extend{T}(predecessors, addatom(atomD), ℓcd, θbcd, rotatable, ϕ))
-                if rotatable
-                    push!(dihedrals, ϕ)
-                end
             elseif isa(step, Tuple{String,String,String,Vector{String}})
                 # Branch
                 a, b, c, ats = step
@@ -276,9 +332,8 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         error("the build sequence placed $aidx atoms but the chain has $natoms$detail")
     end
     ndih = count(step -> step isa Extend && step.rotatable, steps)
-    length(dihedrals) == ndih ||
-        error("recorded $(length(dihedrals)) dihedrals for $ndih rotatable steps")
-    return BondParametrization{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndih), dihedrals
+    bp = BondParametrization{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndih)
+    return bp, convert(Vector{T}, dihedralangles(bp, X0))
 end
 bondparametrization(chain::Chain) = bondparametrization(Float64, chain)
 

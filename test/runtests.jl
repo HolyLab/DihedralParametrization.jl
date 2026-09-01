@@ -75,6 +75,50 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws DimensionMismatch atomcoordinates(bp, dihedrals, n[1:2], cα, c)
     end
 
+    @testset "dihedralangles" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+
+        # `bondparametrization` reports exactly what `dihedralangles` measures.
+        @test dihedralangles(bp, chain) == dihedrals
+        @test dihedralangles(bp, atomcoordinates(bp, dihedrals, chain)) ≈ dihedrals
+
+        # Round trip through `atomcoordinates`, modulo 2π.
+        rng = Random.Xoshiro(23)
+        θ = 2π .* (rand(rng, length(dihedrals)) .- 0.5)
+        θback = dihedralangles(bp, atomcoordinates(bp, θ, chain))
+        @test all(x -> isapprox(x, 0; atol=1e-10), rem2pi.(θ .- θback, RoundNearest))
+
+        # A Float32 parametrization with Float64 coordinates promotes.
+        bp32, _ = bondparametrization(Float32, chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+        @test dihedralangles(bp32, X) isa Vector{Float64}
+        @test dihedralangles(bp32, chain) isa Vector{Float64}
+
+        @test_throws DimensionMismatch dihedralangles(bp, X[1:end-1])
+        @test_throws DimensionMismatch dihedralangles(bp, push!(copy(X), X[end]))
+
+        # A chain whose atom count differs from the parametrization's.
+        strucshort = read(path, MMCIFFormat)
+        specializeresnames!(strucshort)
+        chainshort = only(only(strucshort))
+        resshort = collectresidues(chainshort)[5]
+        delete!(resshort.atoms, "HB2")
+        deleteat!(resshort.atom_list, findfirst(==("HB2"), resshort.atom_list))
+        @test_throws "atoms but the parametrization describes" dihedralangles(bp, chainshort)
+
+        # A chain with the right atom count but an atom the parametrization
+        # cannot find: renumbering a residue moves all of its atoms.
+        strucmoved = read(path, MMCIFFormat)
+        specializeresnames!(strucmoved)
+        chainmoved = only(only(strucmoved))
+        collectresidues(chainmoved)[5].number = 10005
+        @test_throws "chain has no atom N in residue 5" dihedralangles(bp, chainmoved)
+    end
+
     @testset "Element types, inference, and corrupt parametrizations" begin
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)

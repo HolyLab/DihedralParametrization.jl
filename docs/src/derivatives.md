@@ -119,8 +119,9 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   sequence: atoms `1:3` are residue 1's N, Cα, and C, and every later atom is
   placed by exactly one step, in the order the atoms appear in `bp.atoms`.
   The entries of `dihedrals` (of length `ndihedrals(bp)`) correspond, in
-  order, to the rotatable `Extend` steps of that sequence. For a chain of
-  `nres` residues the steps run:
+  order, to the rotatable `Extend` steps of that sequence.
+  [`dihedralangles`](@ref) measures that vector from a set of coordinates,
+  inverting `atomcoordinates`. For a chain of `nres` residues the steps run:
 
   1. **Backbone**, residue by residue from residue 2 to residue `nres`: the
      step placing N_i (rotatable, ψ_{i-1}, about the Cα_{i-1}–C_{i-1} bond),

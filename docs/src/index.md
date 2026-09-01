@@ -9,9 +9,10 @@ using their rotatable-bond [dihedral angles](https://en.wikipedia.org/wiki/Dihed
 the backbone angles φ and ψ, and the side-chain χ angles. A [`bondparametrization`](@ref)
 call separates a protein chain into fixed geometry (bond lengths, bond angles,
 and non-rotatable dihedrals such as ω) and a vector of rotatable dihedral
-angles. [`atomcoordinates`](@ref) reconstructs the atom coordinates. This
-representation preserves bond lengths and angles while using fewer parameters
-than Cartesian coordinates.
+angles. [`atomcoordinates`](@ref) reconstructs the atom coordinates, and
+[`dihedralangles`](@ref) measures the dihedral vector back out of a set of
+coordinates. This representation preserves bond lengths and angles while
+using fewer parameters than Cartesian coordinates.
 
 The [Derivatives](@ref) page documents the Jacobian and related matrix-vector
 products for optimization and sampling in dihedral coordinates.
