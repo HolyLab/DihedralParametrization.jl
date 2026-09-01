@@ -185,8 +185,13 @@ function unrecognized_residue_message(res::AbstractResidue)
     base = length(rname) == 4 && rname[1] in ('N', 'C') ? rname[2:end] : rname
     msg = "$(resdesc(res)): unrecognized residue name — "
     base == "HIS" && return msg * "histidine must be disambiguated as HID/HIE/HIP; " * specializeresnames_hint
-    return msg * "nonstandard and hetero residues are not supported"
+    return msg * "nonstandard and hetero residues are not supported; " *
+                 "pass collectresidues(chain, standardselector) to exclude them"
 end
+
+# Convert residue views to the vector type used by BioStructures.
+residuevector(ress::Vector{<:AbstractResidue}) = ress
+residuevector(ress::AbstractVector{<:AbstractResidue}) = convert(Vector{AbstractResidue}, ress)
 
 """
     resatom, aidx = resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
@@ -234,6 +239,7 @@ end
 """
     dihedrals = dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     dihedrals = dihedralangles(bp::BondParametrization, chain::Chain)
+    dihedrals = dihedralangles(bp::BondParametrization, ress::AbstractVector{<:AbstractResidue})
 
 Measure a configuration's rotatable dihedral angles in radians. This is the
 inverse of `atomcoordinates`; `dihedrallabels` names the entries. Angles lie
@@ -241,10 +247,10 @@ in `-π` to `π`.
 
 `X` holds one coordinate per entry of `bp.atoms`, as `atomcoordinates`
 returns; a `DimensionMismatch` is thrown if its length differs. Other
-3-vector types are converted to `SVector{3}`. The `Chain` method takes the
-coordinates from `chain`, matched through `bp.atoms`, and
-throws an `ArgumentError` if the chain's atom count differs from `bp`'s or if
-an atom named in `bp.atoms` is absent.
+3-vector types are converted to `SVector{3}`. The `Chain` and residue-vector
+methods take the coordinates from the chain's, or the given, residues,
+matched through `bp.atoms`, and throw an `ArgumentError` if their atom
+count differs from `bp`'s or if an atom named in `bp.atoms` is absent.
 
 The result promotes the element types of `bp` and the coordinates. See
 [`dihedralangles!`](@ref) for the in-place form.
@@ -254,8 +260,9 @@ function dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}}
     return dihedralangles!(Vector{R}(undef, ndihedrals(bp)), bp, X)
 end
 
-function dihedralangles(bp::BondParametrization, chain::Chain)
-    return dihedralangles(bp, chaincoordinates(bp, chain))
+dihedralangles(bp::BondParametrization, chain::Chain) = dihedralangles(bp, collectresidues(chain))
+function dihedralangles(bp::BondParametrization, ress::AbstractVector{<:AbstractResidue})
+    return dihedralangles(bp, residuecoordinates(bp, ress))
 end
 dihedralangles(bp::BondParametrization, X::AbstractVector{<:AbstractVector}) = dihedralangles(bp, svectors(X))
 
@@ -283,19 +290,19 @@ end
 dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::AbstractVector{<:AbstractVector}) =
     dihedralangles!(dihedrals, bp, svectors(X))
 
-# Collect `chain`'s coordinates in the order of `bp.atoms`.
-function chaincoordinates(bp::BondParametrization, chain::Chain)
-    chainatoms = collectatoms(chain)
-    length(chainatoms) == length(bp.atoms) ||
-        throw(ArgumentError("chain has $(length(chainatoms)) atoms but the parametrization describes $(length(bp.atoms))"))
-    byatomkey = Dict{AtomKey,eltype(chainatoms)}()
-    for a in chainatoms
+# Collect the residues' coordinates in the order of `bp.atoms`.
+function residuecoordinates(bp::BondParametrization, ress::AbstractVector{<:AbstractResidue})
+    atoms = collectatoms(residuevector(ress))
+    length(atoms) == length(bp.atoms) ||
+        throw(ArgumentError("the residues have $(length(atoms)) atoms but the parametrization describes $(length(bp.atoms))"))
+    byatomkey = Dict{AtomKey,eltype(atoms)}()
+    for a in atoms
         byatomkey[AtomKey(a)] = a
     end
     return map(bp.atoms) do akey
         a = get(byatomkey, akey, nothing)
         a === nothing &&
-            throw(ArgumentError("chain has no atom $(akey.aname) in residue $(akey.resnum), which the parametrization requires"))
+            throw(ArgumentError("the residues have no atom $(akey.aname) in residue $(akey.resnum), which the parametrization requires"))
         SVector{3}(coords(a))
     end
 end
@@ -373,11 +380,16 @@ function dihedrallabels(bp::BondParametrization)
 end
 
 """
-    bp, dihedrals = bondparametrization(chain)
+    bp, dihedrals = bondparametrization(chain::Chain)
+    bp, dihedrals = bondparametrization(ress::AbstractVector{<:AbstractResidue})
     bp, dihedrals = bondparametrization(T, chain)
+    bp, dihedrals = bondparametrization(T, ress)
 
 Represent a protein `chain` by fixed bond parameters `bp` and its rotatable
 `dihedrals`. These values determine its coordinates up to a rigid transform.
+
+Pass a residue vector in chain order to exclude waters or ligands; for
+example, `collectresidues(chain, standardselector)`.
 
 `dihedrals` is a vector representing the rotatable dihedral angles (in
 radians) in the chain, in the order documented in [Conventions](@ref);
@@ -392,15 +404,16 @@ The first form stores `bp`'s bond lengths, bond angles, and fixed dihedrals
 Disordered atoms and residues contribute their default alternatives.
 
 An `ArgumentError` reports a chain the build tables cannot describe: an
-empty chain, an unrecognized residue name, a residue carrying an insertion
-code, a missing backbone or side-chain atom, a chain break that leaves a
+empty chain, an unrecognized (including nonstandard or hetero) residue
+name, a residue carrying an insertion code, a missing backbone or
+side-chain atom, a chain break or out-of-order residues that leave a
 `-`/`+` build-table reference unresolvable, or a residue with atoms the
 build tables never place.
 """
-function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
-    ress = collectresidues(chain)
+function bondparametrization(::Type{T}, ress::AbstractVector{<:AbstractResidue}) where {T<:Real}
+    ress = residuevector(ress)
     nres = length(ress)
-    nres >= 1 || throw(ArgumentError("chain has no residues"))
+    nres >= 1 || throw(ArgumentError("no residues to parametrize"))
     natoms = sum(length(res) for res in ress)
     atoms = Vector{AtomKey}(undef, natoms)
     steps = Vector{Union{Extend{T},Branch{T}}}()
@@ -513,7 +526,8 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     bp = BondParametrization{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndih)
     return bp, convert(Vector{T}, dihedralangles(bp, X0))
 end
-bondparametrization(chain::Chain) = bondparametrization(Float64, chain)
+bondparametrization(::Type{T}, chain::Chain) where {T<:Real} = bondparametrization(T, collectresidues(chain))
+bondparametrization(chain) = bondparametrization(Float64, chain)
 
 function betas(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T}, ds) where T<:Real
     # The mirror image of add_to_middle!

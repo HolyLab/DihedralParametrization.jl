@@ -54,10 +54,12 @@ function frametuple((n, cα, c)::NTuple{3,AbstractVector})
     return (SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
 end
 frametuple(frame::NTuple{3,AbstractAtom}) = frametuple(map(coords, frame))
-function frametuple(chain::Chain)
-    nter = first(chain)::AbstractResidue
-    return frametuple((nter["N"]::AbstractAtom, nter["CA"]::AbstractAtom, nter["C"]::AbstractAtom))
+frametuple(chain::Chain) = frametuple(first(chain)::AbstractResidue)
+function frametuple(ress::AbstractVector{<:AbstractResidue})
+    isempty(ress) && throw(ArgumentError("no residues to supply a reference frame"))
+    return frametuple(first(ress))
 end
+frametuple(nter::AbstractResidue) = frametuple((nter["N"]::AbstractAtom, nter["CA"]::AbstractAtom, nter["C"]::AbstractAtom))
 
 # The frame with residue 1's N at the origin, Cα on the positive x-axis, and
 # C in the xy-plane with positive y.
@@ -72,6 +74,7 @@ end
 """
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c); rtol, atol)
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain; rtol, atol)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, ress::AbstractVector{<:AbstractResidue}; rtol, atol)
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector)
 
 Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
@@ -79,9 +82,9 @@ and a reference frame given by residue 1's backbone N, Cα, and C. Results
 follow the order of `bp.atoms`.
 
 The frame may be a tuple `(n, cα, c)` of three 3-vectors or three
-BioStructures atoms, or a `Chain` whose first residue supplies the atoms.
-The two-argument form places residue 1's N at the origin, Cα on the positive
-x-axis, and C in the xy-plane with positive y.
+BioStructures atoms, or a `Chain` or vector of residues whose first residue
+supplies the atoms. The two-argument form places residue 1's N at the
+origin, Cα on the positive x-axis, and C in the xy-plane with positive y.
 
 `length(dihedrals)` must equal `ndihedrals(bp)`. The reference geometry must
 match `bp`; `rtol` and `atol` control its `isapprox` checks. For coordinates
@@ -96,8 +99,8 @@ See [`atomcoordinates!`](@ref) for the in-place form.
 
 Reference coordinates are converted to `SVector{3,T}` using their promoted
 element type. A tuple of atoms contributes each atom's `coords` (for a
-`DisorderedAtom`, its default alternate location); the `Chain` method uses
-the first residue's N, CA, and C atoms.
+`DisorderedAtom`, its default alternate location); the `Chain` and
+residue-vector methods use the first residue's N, CA, and C atoms.
 """
 function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame; rtol=nothing, atol=0)
     n, cα, c = frametuple(frame)
@@ -111,6 +114,7 @@ atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector) =
 """
     atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c); rtol, atol)
     atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, chain::Chain; rtol, atol)
+    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, ress::AbstractVector{<:AbstractResidue}; rtol, atol)
     atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector)
 
 Write [`atomcoordinates`](@ref) into `X` and return it. `X` must contain
@@ -177,32 +181,38 @@ Copy `reference` and replace its atom coordinates with `X`, matched through
 `bp.atoms`. `reference` comes first because it is the template being copied
 and overwritten, like the destination argument of `copyto!`.
 
-`length(X)` must equal `length(bp.atoms)`; a `DimensionMismatch` is thrown
-otherwise. An `ArgumentError` is thrown if `reference`'s atom count differs
-from `bp`'s or if an atom of `reference` is not named by `bp.atoms`. A
-`DisorderedAtom` has only its default alternate location overwritten, and a
-`DisorderedResidue` only its default residue.
+Residues are matched by number. Those represented by `bp` are overwritten;
+other residues are copied unchanged.
+
+`length(X)` must equal `length(bp.atoms)`, and represented residues must
+contain exactly the atoms described by `bp`. Only default alternatives of
+disordered atoms and residues are overwritten.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     length(X) == length(bp.atoms) ||
         throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
     out = copy(reference)
-    outatoms = collectatoms(out)
     coordidx = Dict{AtomKey, Int}()
     for (i, akey) in pairs(bp.atoms)
         coordidx[akey] = i
     end
-    for a in outatoms
-        akey = AtomKey(a)
-        i = get(coordidx, akey, nothing)
-        i === nothing &&
-            throw(ArgumentError("reference has atom $(akey.aname) in residue $(akey.resnum), which the parametrization does not describe"))
-        coords!(a, X[i])
+    resnums = Set(akey.resnum for akey in bp.atoms)
+    nwritten = 0
+    for res in collectresidues(out)
+        resnumber(res) in resnums || continue
+        for a in collectatoms(res)
+            akey = AtomKey(a)
+            i = get(coordidx, akey, nothing)
+            i === nothing &&
+                throw(ArgumentError("reference has atom $(akey.aname) in $(resdesc(res)), which the parametrization does not describe"))
+            coords!(a, X[i])
+            nwritten += 1
+        end
     end
-    # Every atom of `out` is named by `bp`, so a shortfall means `reference`
+    # Every written atom is named by `bp`, so a shortfall means `reference`
     # lacks atoms that `bp` describes.
-    length(outatoms) == length(bp.atoms) ||
-        throw(ArgumentError("reference has $(length(outatoms)) atoms but the parametrization describes $(length(bp.atoms))"))
+    nwritten == length(bp.atoms) ||
+        throw(ArgumentError("reference has $nwritten atoms in the residues the parametrization describes, but it describes $(length(bp.atoms))"))
     return out
 end
 buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:AbstractVector}) =

@@ -276,7 +276,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         specializeresnames!(strucmoved)
         chainmoved = only(only(strucmoved))
         collectresidues(chainmoved)[5].number = 10005
-        @test_throws "chain has no atom N in residue 5" dihedralangles(bp, chainmoved)
+        @test_throws "no atom N in residue 5, which the parametrization requires" dihedralangles(bp, chainmoved)
     end
 
     @testset "dihedrallabels" begin
@@ -486,6 +486,65 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test isdisorderedres(rd)
         @test resname(rd) == resname(r)
         @test all(isapprox(coords(rd[name]), coords(r[name]); atol=1e-8) for name in atomnames(r))
+    end
+
+    @testset "Residue vectors and hetero residues" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        function loadchain()
+            struc = read(path, MMCIFFormat)
+            specializeresnames!(struc)
+            return only(only(struc))
+        end
+        chain = loadchain()
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+
+        # The residue-vector forms agree with the `Chain` forms.
+        ress = collectresidues(chain)
+        @test bondparametrization(ress) == (bp, dihedrals)
+        @test bondparametrization(Float32, ress) == bondparametrization(Float32, chain)
+        @test dihedralangles(bp, ress) == dihedrals
+        @test atomcoordinates(bp, dihedrals, ress) == X
+        @test atomcoordinates!(similar(X), bp, dihedrals, ress; atol=1e-3) == X
+        @test atomcoordinates(bp, dihedrals, view(ress, :)) == X
+        @test dihedralangles(bp, view(ress, :)) == dihedrals
+        @test bondparametrization(view(ress, :)) == (bp, dihedrals)
+        @test bondparametrization(Residue[r for r in ress]) == (bp, dihedrals)
+
+        # Select standard residues from a chain containing water.
+        chainwet = loadchain()
+        water = Residue("HOH", 301, ' ', true, chainwet)
+        water.atoms["O"] = BioStructures.Atom(9999, "O", ' ', [1.0, 2.0, 3.0], 1.0, 0.0, "O", "", water)
+        push!(water.atom_list, "O")
+        chainwet.residues[resid(water)] = water
+        push!(chainwet.res_list, resid(water))
+        @test_throws "residue H_301 (HOH): unrecognized residue name" bondparametrization(chainwet)
+        @test_throws "pass collectresidues(chain, standardselector) to exclude them" bondparametrization(chainwet)
+        @test_throws "the residues have $(length(X) + 1) atoms but the parametrization describes $(length(X))" dihedralangles(bp, chainwet)
+        standard = collectresidues(chainwet, standardselector)
+        @test length(standard) == length(ress)
+        @test bondparametrization(standard) == (bp, dihedrals)
+        @test dihedralangles(bp, standard) == dihedrals
+        @test atomcoordinates(bp, dihedrals, standard) == X
+        @test atomcoordinates(bp, dihedrals, chainwet) == X   # the frame only needs residue 1
+
+        # `buildchain` overwrites the described residues and copies the water.
+        rng = Random.Xoshiro(5)
+        θ = dihedrals .+ 0.2 .* randn(rng, length(dihedrals))
+        Xθ = atomcoordinates(bp, θ, standard)
+        out = buildchain(chainwet, bp, Xθ)
+        @test length(collectresidues(out)) == length(ress) + 1
+        @test coords(out["H_301"]["O"]) == [1.0, 2.0, 3.0]
+        θback = dihedralangles(bp, collectresidues(out, standardselector))
+        @test all(x -> isapprox(x, 0; atol=1e-10), rem2pi.(θback .- θ, RoundNearest))
+        @test all(isapprox(coords(out[a.resnum][String(a.aname)]), Xθ[i]; atol=1e-8) for (i, a) in pairs(bp.atoms))
+
+        # The water is not counted toward the described residues' atoms.
+        let r = collectresidues(chainwet)[5]
+            delete!(r.atoms, "HB2")
+            deleteat!(r.atom_list, findfirst(==("HB2"), r.atom_list))
+            @test_throws "reference has $(length(X) - 1) atoms in the residues the parametrization describes, but it describes $(length(X))" buildchain(chainwet, bp, X)
+        end
     end
 
     @testset "2QMT (experimental structure)" begin
@@ -983,7 +1042,9 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         X = atomcoordinates(bp, dihedrals, chain)
 
         @test_throws ArgumentError bondparametrization(Chain("Z"))
-        @test_throws "chain has no residues" bondparametrization(Chain("Z"))
+        @test_throws "no residues to parametrize" bondparametrization(Chain("Z"))
+        @test_throws "no residues to parametrize" bondparametrization(AbstractResidue[])
+        @test_throws "no residues to supply a reference frame" atomcoordinates(bp, dihedrals, AbstractResidue[])
 
         # A missing backbone atom, named with its residue.
         let c = loadchain(), r = collectresidues(c)[12]
@@ -1044,7 +1105,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             delete!(r.atoms, "HB2")
             deleteat!(r.atom_list, findfirst(==("HB2"), r.atom_list))
             @test_throws ArgumentError buildchain(c, bp, X)
-            @test_throws "atoms but the parametrization describes" buildchain(c, bp, X)
+            @test_throws "atoms in the residues the parametrization describes, but it describes" buildchain(c, bp, X)
         end
 
         @test [a.coords for a in collectatoms(buildchain(chain, bp, MVector{3}.(X)))] ==
