@@ -24,7 +24,7 @@ function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
                 ℓcd::Real, (sθ, cθ)::Tuple{Real,Real}, (sϕ, cϕ)::Tuple{Real,Real})
     # Calculate unit vectors
     bc = c - b
-    bc = bc / norm(bc)    # technically, SN-NeRF wants us to pass `norm(bc)` in as an argument
+    bc = bc / norm(bc)
     ab = b - a
     n = cross(ab, bc)
     n = n / norm(n)
@@ -53,14 +53,31 @@ add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs) =
     add_to_middle!(promote_type(typeof(a), typeof(b), typeof(c))[], a, b, c, βs)
 
 """
-    X = atomcoordinates(bp::BondParametrization{T}, dihedrals::Vector{T}, n::AbstractVector{T}, cα::AbstractVector{T}, c::AbstractVector{T}) where T<:Real
+    X = atomcoordinates(bp::BondParametrization, dihedrals::Vector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::Vector, n::Atom, cα::Atom, c::Atom)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::Vector, chain::Chain)
 
-Given a `BondParametrization` object `bp`, a vector of dihedral angles `dihedrals`,
-and the coordinates of the first three backbone atoms in the chain (`n`, `cα`, and `c`),
-compute the 3D coordinates of all atoms in the chain.
+Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
+and the first backbone N, Cα, and C coordinates. Results follow the order of
+`bp.atoms`.
+
+`length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
+thrown otherwise. The element type of `dihedrals` is independent of the
+element type of `bp` and the reference coordinates, so automatic
+differentiation can pass dual or tangent numbers as `dihedrals` while `bp`
+stays `Float64`.
+
+# Extended help
+
+Reference coordinates are converted to `SVector{3,T}` using their promoted
+element type. The `Atom` method reads `coords`; the `Chain` method uses the
+first residue's N, CA, and C atoms.
 """
 function atomcoordinates(bp::BondParametrization, dihedrals::Vector{S}, n::SVector{3,T}, cα::SVector{3,T}, c::SVector{3,T}) where {S<:Real, T<:Real}
     # Check that the inputs are consistent with `bp`
+    nd = ndihedrals(bp)
+    length(dihedrals) == nd ||
+        throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
     norm(cα - n) ≈ bp.bblengths[1] || error("Provided N and Cα do not match bond length in bp")
     norm(c - cα) ≈ bp.bblengths[2] || error("Provided Cα and C do not match bond length in bp")
     bondangle(n - cα, c - cα) ≈ bp.bbangles[1] || error("Provided N, Cα, and C do not match bond angle in bp")
@@ -116,7 +133,11 @@ function atomcoordinates(bp::BondParametrization, dihedrals::Vector{S}, n::SVect
     @assert length(X) == length(bp.atoms)
     return X
 end
-atomcoordinates(bp::BondParametrization, dihedrals::Vector, n::Atom, cα::Atom, c::Atom) = atomcoordinates(bp, dihedrals, SVector{3}(n.coords), SVector{3}(cα.coords), SVector{3}(c.coords))
+function atomcoordinates(bp::BondParametrization, dihedrals::Vector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
+    T = promote_type(eltype(n), eltype(cα), eltype(c))
+    return atomcoordinates(bp, dihedrals, SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
+end
+atomcoordinates(bp::BondParametrization, dihedrals::Vector, n::Atom, cα::Atom, c::Atom) = atomcoordinates(bp, dihedrals, n.coords, cα.coords, c.coords)
 function atomcoordinates(bp::BondParametrization, dihedrals::Vector, chain::Chain)
     nter = first(chain)::Residue
     return atomcoordinates(bp, dihedrals, nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom)
@@ -125,9 +146,8 @@ end
 """
     out = buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
 
-Given a reference `Chain` object, a `BondParametrization` object `bp`, and a
-vector of atom 3D coordinates `X`, construct a new `Chain` object with the same
-sequence and atoms as `reference` but with the coordinates from `X`.
+Copy `reference` and replace its atom coordinates with `X`, matched through
+`bp.atoms`.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     out = copy(reference)

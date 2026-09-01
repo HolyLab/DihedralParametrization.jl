@@ -1,5 +1,16 @@
 # Encoding is optimized for repeated calls to `atomcoordinates`.
 
+"""
+    AtomData
+
+Identifies one atom of a `BondParametrization` by its source residue and
+atom name.
+
+# Fields
+- `ridx::Int`: the residue number from the source structure (as returned by
+  `BioStructures.resnumber`), not a position in `BondParametrization.residues`.
+- `aname::Symbol`: the atom's name within its residue (e.g. `:CA`, `:HB2`).
+"""
 struct AtomData
     ridx::Int
     aname::Symbol
@@ -9,6 +20,12 @@ function AtomData(a::Atom)
     return AtomData(parse(Int, resid(residue(a); full=false)), Symbol(aname))
 end
 
+# A build step that places one atom `d` by extending the chain `a-b-c-d` with
+# the SN-NeRF formula (see `snnerf`): `predecessors` are the indices into the
+# coordinate vector of the already-placed atoms `a`, `b`, `c`; `ℓcd` and
+# `θbcd` are the fixed C–D bond length and B–C–D bond angle; `ϕ` is the
+# dihedral angle to use when `rotatable` is `false` (a rotatable step instead
+# consumes the next entry of `dihedrals`).
 struct Extend{T}
     predecessors::Tuple{Int,Int,Int}              # indices in X of a, b, c
     ℓcd::T
@@ -17,27 +34,84 @@ struct Extend{T}
     ϕ::T  # fixed (or original) dihedral angle, only used if not rotatable
 end
 
+# A build step that places one or more atoms in a fixed (non-rotatable)
+# tetrahedral-style geometry from already-placed atoms `a`, `b`, `c` (indexed
+# by `predecessors`), via `add_to_middle!`. `βs` holds each new atom's
+# coefficients in the local `a-b-c` frame.
 struct Branch{T}
     predecessors::Tuple{Int,Int,Int}              # indices in X of a, b, c
     βs::Vector{SVector{3,T}}                      # coefficients for placement from a, b, c
 end
 
+# One residue's sidechain build sequence: the ordered list of `Extend`/`Branch`
+# steps that places its atoms once the backbone and preceding residues are
+# already placed.
 struct ResidueData{T}
     steps::Vector{Union{Extend{T}, Branch{T}}}    # list of build steps for this residue
 end
 
 
+"""
+    BondParametrization{T<:Real}
+
+Stores the fixed geometry and build sequence needed to reconstruct a protein
+chain from its rotatable dihedral angles. See `bondparametrization`,
+`atomcoordinates`, and `buildchain`. `ndihedrals(bp)` gives the required
+number of angles.
+
+# Fields
+- `atoms::Vector{AtomData}`: one entry per atom, in the order
+  `atomcoordinates` returns coordinates and `buildchain` consumes them; entry
+  `i` names the atom at row `i` of that coordinate vector.
+- `bblengths::Vector{T}`: backbone bond lengths, length `3*nres` where
+  `nres = length(residues)`. Entries `3i-2:3i` for residue `i` are the N–Cα,
+  Cα–C, and C–N(next) lengths; the last residue's "next" atom is OXT.
+- `bbangles::Vector{T}`: backbone bond angles, length `3*nres-1`. Entries
+  `3i-2:3i` for residue `i` are the N–Cα–C, Cα–C–N(next), and
+  C–N(next)–Cα(next) angles; the last residue contributes only the first two
+  of these (there is no following residue).
+- `omegas::Vector{T}`: the ω dihedral of each peptide bond, length
+  `nres - 1`. These are fixed and do not appear in `dihedrals`; entry `i` is
+  the ω between residue `i` and residue `i+1`.
+- `phirotatable::Vector{Bool}`: whether residue `i`'s own φ is a free
+  dihedral (`true`) or fixed by a ring closure such as proline's (`false`),
+  length `nres`. Residue 1 has no φ; entry 1 is unused.
+- `phi::Vector{T}`: the fixed φ value for residue `i`, length `nres`; only
+  meaningful where `!phirotatable[i]`.
+- `residues::Vector{ResidueData{T}}`: each residue's sidechain build
+  sequence — the bond length, bond angle, and rotatability of every
+  sidechain atom placed relative to its already-placed predecessors.
+"""
 struct BondParametrization{T<:Real}
     atoms::Vector{AtomData}    # list of all atoms in the chain
     bblengths::Vector{T}          # backbone bond lengths, of length 3*nres (we use OXT for the last C)
     bbangles::Vector{T}           # backbone bond angles, of length 3*nres-1 (")
-    omegas::Vector{T}             # omega dihedrals (fixed and not represented in the dihedrals vector), of length nres (final one is for placement of OXT)
+    omegas::Vector{T}             # omega dihedrals (fixed and not represented in the dihedrals vector), of length nres-1
     phirotatable::Vector{Bool}    # whether residue i's own phi is a free dihedral, of length nres (residue 1 has no phi; entry unused)
     phi::Vector{T}                # fixed phi value for residue i, of length nres (only meaningful where !phirotatable[i])
     residues::Vector{ResidueData{T}}   # list of residues
 end
 
 Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(length(bp.residues)) residues")
+
+"""
+    n = ndihedrals(bp::BondParametrization)
+
+Return the number of rotatable dihedrals in `bp`.
+"""
+function ndihedrals(bp::BondParametrization)
+    nres = length(bp.residues)
+    nphi_free = count(view(bp.phirotatable, 2:nres))
+    nsidechain_free = sum((count(step -> step isa Extend && step.rotatable, r.steps) for r in bp.residues); init=0)
+    return (nres - 1) + nphi_free + 1 + nsidechain_free
+end
+
+# Error for a residue absent from the build tables.
+unrecognized_residue_message(i::Int, rname::AbstractString) =
+    "residue $i ($rname): unrecognized residue name — " *
+    "histidine must be disambiguated as HID/HIE/HIP, and amino-/carboxyl-terminal " *
+    "residues need an \"N\"/\"C\"-prefixed name; BioStructures.specializeresnames! " *
+    "assigns these names (see the documentation's \"Pre-requisites\" section)"
 
 """
     resatom, ridx = resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
@@ -61,19 +135,31 @@ function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
                      "residue $i has no " * (c1 == '-' ? "preceding" : "following") * " residue"))
         return ress[j][aname], resatomidxs[j][aname]
     else
-        return ress[i][ref], resatomidxs[i][ref]
+        atom = try
+            ress[i][ref]
+        catch err
+            err isa KeyError || rethrow()
+            error("residue $i ($(resname(ress[i]))): cannot find atom \"$ref\" required by residue_build_sequence")
+        end
+        return atom, resatomidxs[i][ref]
     end
 end
 
 """
     bp, dihedrals = bondparametrization(chain)
+    bp, dihedrals = bondparametrization(T, chain)
 
-Parametrize a protein `chain` via bond parameters. Together, `bp` and
-`dihedrals` are sufficient to reconstruct the 3D coordinates of the chain modulo
-a rigid body transformation.
+Represent a protein `chain` by fixed bond parameters `bp` and its rotatable
+`dihedrals`. These values determine its coordinates up to a rigid transform.
 
-`dihedrals` is a vector representing the rotatable dihedral angles in the chain.
-`bp` is a `BondParametrization` object containing all other necessary information.
+`dihedrals` is a vector representing the rotatable dihedral angles (in
+radians) in the chain, in the order documented in [Conventions](@ref);
+`ndihedrals` gives its length. `bp` is a `BondParametrization` object
+containing all other necessary information.
+
+The first form stores `bp`'s bond lengths, bond angles, and fixed dihedrals
+(and returns `dihedrals`) as `Float64`; pass a type explicitly, e.g.
+`bondparametrization(Float32, chain)`, to use a different real type instead.
 """
 function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     # Preallocate arrays
@@ -119,7 +205,12 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         if i < nres
             push!(dihedrals, ψs[i])
             # A ring through N-CA fixes ϕ (as in proline).
-            rot = residue_phi_rotatable[resname(ress[i+1])]
+            rot = try
+                residue_phi_rotatable[resname(ress[i+1])]
+            catch err
+                err isa KeyError || rethrow()
+                error(unrecognized_residue_message(i+1, resname(ress[i+1])))
+            end
             phirotatable[i+1] = rot
             phi[i+1] = ϕs[i+1]
             rot && push!(dihedrals, ϕs[i+1])
@@ -136,7 +227,12 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         # CYX is disulfide-bonded cysteine and therefore has no thiol hydrogen.
         rname ∈ ("CYX", "NCYX", "CCYX") && haskey(res.atoms, "HG") &&
             error("residue $i ($rname): CYX (disulfide-bonded cysteine) must not have a thiol HG")
-        seq = residue_build_sequence[rname]
+        seq = try
+            residue_build_sequence[rname]
+        catch err
+            err isa KeyError || rethrow()
+            error(unrecognized_residue_message(i, rname))
+        end
         atomidx = resatomidxs[i]
         steps = Vector{Union{Extend{T}, Branch{T}}}()
         for step in seq
@@ -144,9 +240,6 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 # Extend
                 a, b, c, d, rotatable = step
                 i == length(ress) && d == "OXT" && continue # already added
-                if i == 1 && d == "H" && !haskey(res.atoms, "H")  # FIXME: this is a hack
-                    d = "H2"
-                end
                 atomA, idxA = resolvebuildref(a, i, ress, resatomidxs)
                 atomB, idxB = resolvebuildref(b, i, ress, resatomidxs)
                 atomC, idxC = resolvebuildref(c, i, ress, resatomidxs)

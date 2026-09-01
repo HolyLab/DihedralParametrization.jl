@@ -41,6 +41,63 @@ end
             at = chain[adata.ridx][String(adata.aname)]
             @test isapprox(at.coords, coords; atol=1e-8)
         end
+
+        # Reference coordinates as plain vectors, views, and mixed containers
+        r1 = chain[1]
+        n, cα, c = r1["N"].coords, r1["CA"].coords, r1["C"].coords
+        @test atomcoordinates(bp, dihedrals, n, cα, c) == X
+        @test atomcoordinates(bp, dihedrals, view(n, :), SVector{3}(cα), c) == X
+        @test_throws DimensionMismatch atomcoordinates(bp, dihedrals, n[1:2], cα, c)
+    end
+
+    @testset "buildchain" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+
+        X = atomcoordinates(bp, dihedrals, chain)
+        rebuilt = buildchain(chain, bp, X)
+        for adata in bp.atoms
+            a0 = chain[adata.ridx][String(adata.aname)]
+            a1 = rebuilt[adata.ridx][String(adata.aname)]
+            @test isapprox(a0.coords, a1.coords; atol=1e-8)
+        end
+        _, dihedralsround = bondparametrization(rebuilt)
+        @test isapprox(dihedralsround, dihedrals; atol=1e-8)
+
+        # Perturbed dihedrals: rebuilding and re-encoding must recover the
+        # same rotatable dihedrals modulo 2π.
+        rng = Random.Xoshiro(7)
+        θpert = dihedrals .+ 0.3 .* randn(rng, length(dihedrals))
+        Xpert = atomcoordinates(bp, θpert, chain)
+        pertchain = buildchain(chain, bp, Xpert)
+        _, dihedralspert = bondparametrization(pertchain)
+        wrap(x) = mod(x + π, 2π) - π
+        @test all(k -> isapprox(wrap(dihedralspert[k] - θpert[k]), 0; atol=1e-8), eachindex(dihedrals))
+    end
+
+    @testset "2QMT (experimental structure)" begin
+        # Provenance: test/data/README.md.
+        path = joinpath(@__DIR__, "data", "2qmt_H.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+
+        X = atomcoordinates(bp, dihedrals, chain)
+        for (adata, coords) in zip(bp.atoms, X)
+            at = chain[adata.ridx][String(adata.aname)]
+            @test isapprox(at.coords, coords; atol=1e-8)
+        end
+
+        rebuilt = buildchain(chain, bp, X)
+        for adata in bp.atoms
+            a0 = chain[adata.ridx][String(adata.aname)]
+            a1 = rebuilt[adata.ridx][String(adata.aname)]
+            @test isapprox(a0.coords, a1.coords; atol=1e-8)
+        end
     end
 
     @testset "Disulfide (CYX)" begin
@@ -352,9 +409,47 @@ end
         @test isapprox(Scyx, Hadcyx; rtol=1e-10)
     end
 
+    @testset "Error handling" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+
+        @test_throws "rotatable dihedrals" atomcoordinates(bp, dihedrals[1:end-1], chain)
+        @test_throws "rotatable dihedrals" atomcoordinates(bp, vcat(dihedrals, 0.0), chain)
+
+        # An un-renamed HIS trips the phi-rotatability lookup (residue 6's
+        # name is checked while encoding residue 5's backbone).
+        strucraw = read(path, MMCIFFormat)
+        chainraw = only(only(strucraw))
+        @test_throws "histidine must be disambiguated as HID/HIE/HIP" bondparametrization(chainraw)
+
+        # Residue 1's name is first checked at its build-sequence lookup.
+        struc1 = read(path, MMCIFFormat)
+        specializeresnames!(struc1)
+        chain1 = only(only(struc1))
+        ress1 = collectresidues(chain1)
+        ress1[1].name = "HIS"
+        @test_throws "residue 1 (HIS): unrecognized residue name" bondparametrization(chain1)
+
+        plan = jacobianplan(bp)
+        X = atomcoordinates(bp, dihedrals, chain)
+        w = [zero(SVector{3,Float64}) for _ = 1:plan.natoms]
+        v = zeros(plan.ndih)
+
+        @test_throws DimensionMismatch jtv!(zeros(plan.ndih - 1), plan, X, w)
+        @test_throws DimensionMismatch jtv!(zeros(plan.ndih), plan, X, w[1:end-1])
+        @test_throws DimensionMismatch jtv!(zeros(plan.ndih), plan, X[1:end-1], w)
+
+        @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms-1], plan, X, v)
+        @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms], plan, X, v[1:end-1])
+        @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms], plan, X[1:end-1], v)
+    end
+
     if testad
         @testset "Differentiability" begin
-            function makef(chain)  # for copy/paste command line inferrability
+            function makef(chain)  # Keep inference check self-contained.
                 bp, dihedrals = bondparametrization(chain)
                 return function(dih)
                     return atomcoordinates(bp, dih, chain)

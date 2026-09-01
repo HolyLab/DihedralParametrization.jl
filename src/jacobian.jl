@@ -7,8 +7,19 @@
 """
     plan::JacobianPlan
 
-A reusable plan for evaluating the coordinate-map Jacobian. Construct one
-with `jacobianplan`.
+A reusable plan for evaluating the coordinate Jacobian ∂X/∂θ and related
+products. Construct one with `jacobianplan`; it applies to any coordinates
+produced from the same `BondParametrization`.
+
+# Fields
+- `natoms::Int`: the number of atoms in `X` (equal to `length(bp.atoms)`).
+- `ndih::Int`: the number of rotatable dihedrals (equal to `ndihedrals(bp)`),
+  i.e. the number of Jacobian columns and the required length of `dihedrals`,
+  of `v` in `jvp!`, and of `g` in `jtv!`.
+
+The remaining fields (`deepest`, `parent`, `bidx`, `cidx`) encode the
+build-order tree that `coordinatejacobian!`, `jtv!`, `jvp!`, and `vhp!` use
+internally and are not intended for direct use.
 """
 struct JacobianPlan
     natoms::Int
@@ -126,9 +137,7 @@ function jacobianplan(bp::BondParametrization)
     aidx == natoms || error("built $aidx atoms but bp.atoms has $natoms; traversal does not match atomcoordinates")
 
     ndih = length(parent)
-    nphi_free = count(view(bp.phirotatable, 2:nres))
-    nsidechain_free = sum((count(step -> step isa Extend && step.rotatable, r.steps) for r in bp.residues); init=0)
-    expected = (nres - 1) + nphi_free + 1 + nsidechain_free
+    expected = ndihedrals(bp)
     ndih == expected || error("plan has $ndih dihedral columns but atomcoordinates would consume $expected; " *
                                "traversal does not match atomcoordinates")
 
