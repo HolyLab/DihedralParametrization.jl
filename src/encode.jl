@@ -103,6 +103,8 @@ and `buildchain`.
   its geometry, and whether its dihedral is rotatable.
 - `ndihedrals::Int`: the number of rotatable steps, and hence the required
   length of `dihedrals`.
+
+Use [`natoms`](@ref) and [`ndihedrals`](@ref) instead of accessing fields.
 """
 struct BondParametrization{T<:Real}
     atoms::Vector{AtomKey}
@@ -112,7 +114,37 @@ struct BondParametrization{T<:Real}
     θncac::T                      # residue 1: N–Cα–C bond angle
     steps::Vector{Union{Extend{T},Branch{T}}}
     ndihedrals::Int
+
+    function BondParametrization{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndihedrals) where {T<:Real}
+        nrot = count(step -> step isa Extend && step.rotatable, steps)
+        nrot == ndihedrals ||
+            throw(ArgumentError("steps has $nrot rotatable steps but ndihedrals = $ndihedrals"))
+        return new{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndihedrals)
+    end
 end
+
+# Convert each variant before rebuilding the union-typed step vector.
+Extend{S}(e::Extend) where {S} = Extend{S}(e.predecessors, e.aidx, e.ℓcd, e.θbcd, e.rotatable, e.ϕ)
+Branch{S}(b::Branch) where {S} = Branch{S}(b.predecessors, b.aidx, SVector{3,S}.(b.βs))
+
+"""
+    BondParametrization{S}(bp::BondParametrization)
+
+Copy `bp`, converting its geometric parameters to element type `S`.
+`convert(BondParametrization{S}, bp)` returns `bp` unchanged when its element
+type is already `S`.
+"""
+function BondParametrization{S}(bp::BondParametrization) where {S<:Real}
+    steps = Vector{Union{Extend{S},Branch{S}}}(undef, length(bp.steps))
+    for (i, step) in pairs(bp.steps)
+        steps[i] = step isa Extend ? Extend{S}(step) : Branch{S}(step)
+    end
+    return BondParametrization{S}(copy(bp.atoms), bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, steps, bp.ndihedrals)
+end
+
+# The `Real` bounds ensure that the identity method is more specific.
+Base.convert(::Type{BondParametrization{S}}, bp::BondParametrization) where {S<:Real} = BondParametrization{S}(bp)
+Base.convert(::Type{BondParametrization{T}}, bp::BondParametrization{T}) where {T<:Real} = bp
 
 Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(bp.nres) residues")
 
@@ -124,10 +156,19 @@ Base.eltype(::Type{BondParametrization{T}}) where {T} = T
 
 """
     n = ndihedrals(bp::BondParametrization)
+    n = ndihedrals(plan::JacobianPlan)
 
-Return the number of rotatable dihedrals in `bp`.
+Return the number of rotatable dihedrals.
 """
 ndihedrals(bp::BondParametrization) = bp.ndihedrals
+
+"""
+    n = natoms(bp::BondParametrization)
+    n = natoms(plan::JacobianPlan)
+
+Return the number of atoms.
+"""
+natoms(bp::BondParametrization) = length(bp.atoms)
 
 # Error for a residue absent from the build tables.
 unrecognized_residue_message(res::Residue) =
@@ -163,6 +204,17 @@ function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
     end
 end
 
+# Convert coordinate elements to static 3-vectors without copying static input.
+svectors(X::AbstractVector{<:SVector{3}}) = X
+function svectors(X::AbstractVector{<:AbstractVector})
+    T = eltype(eltype(X))
+    return map(X) do x
+        length(x) == 3 ||
+            throw(DimensionMismatch("each coordinate must have 3 entries, but one has $(length(x))"))
+        SVector{3,T}(x)
+    end
+end
+
 """
     dihedrals = dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     dihedrals = dihedralangles(bp::BondParametrization, chain::Chain)
@@ -172,32 +224,48 @@ inverse of `atomcoordinates`; `dihedrallabels` names the entries. Angles lie
 in `-π` to `π`.
 
 `X` holds one coordinate per entry of `bp.atoms`, as `atomcoordinates`
-returns; a `DimensionMismatch` is thrown if its length differs. The `Chain`
-method takes the coordinates from `chain`, matched through `bp.atoms`, and
+returns; a `DimensionMismatch` is thrown if its length differs. Other
+3-vector types are converted to `SVector{3}`. The `Chain` method takes the
+coordinates from `chain`, matched through `bp.atoms`, and
 throws an `ArgumentError` if the chain's atom count differs from `bp`'s or if
 an atom named in `bp.atoms` is absent.
 
-The result promotes the element types of `bp` and the coordinates.
+The result promotes the element types of `bp` and the coordinates. See
+[`dihedralangles!`](@ref) for the in-place form.
 """
 function dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
-    length(X) == length(bp.atoms) ||
-        throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
     R = promote_type(eltype(bp), eltype(eltype(X)))
-    dihedrals = Vector{R}(undef, ndihedrals(bp))
-    k = 0
-    for step in bp.steps
-        (step isa Extend && step.rotatable) || continue
-        a, b, c = step.predecessors
-        dihedrals[k+=1] = dihedralangle(X[b] - X[a], X[c] - X[b], X[step.aidx] - X[c])
-    end
-    k == ndihedrals(bp) ||
-        throw(ArgumentError("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))"))
-    return dihedrals
+    return dihedralangles!(Vector{R}(undef, ndihedrals(bp)), bp, X)
 end
 
 function dihedralangles(bp::BondParametrization, chain::Chain)
     return dihedralangles(bp, chaincoordinates(bp, chain))
 end
+dihedralangles(bp::BondParametrization, X::AbstractVector{<:AbstractVector}) = dihedralangles(bp, svectors(X))
+
+"""
+    dihedralangles!(dihedrals, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+
+Write [`dihedralangles`](@ref) into `dihedrals` and return it. The output must
+have `ndihedrals(bp)` entries.
+"""
+function dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    Base.require_one_based_indexing(X)
+    length(X) == length(bp.atoms) ||
+        throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
+    nd = ndihedrals(bp)
+    length(dihedrals) == nd ||
+        throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
+    k = firstindex(dihedrals) - 1
+    for step in bp.steps
+        (step isa Extend && step.rotatable) || continue
+        a, b, c = step.predecessors
+        dihedrals[k+=1] = dihedralangle(X[b] - X[a], X[c] - X[b], X[step.aidx] - X[c])
+    end
+    return dihedrals
+end
+dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::AbstractVector{<:AbstractVector}) =
+    dihedralangles!(dihedrals, bp, svectors(X))
 
 # Collect `chain`'s coordinates in the order of `bp.atoms`.
 function chaincoordinates(bp::BondParametrization, chain::Chain)
@@ -285,8 +353,6 @@ function dihedrallabels(bp::BondParametrization)
         a, b, c, d = bp.atoms[ia], bp.atoms[ib], bp.atoms[ic], bp.atoms[step.aidx]
         labels[k+=1] = DihedralLabel(c.resnum, backbonename(a, b, c, d), (a, b, c, d))
     end
-    k == ndihedrals(bp) ||
-        throw(ArgumentError("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))"))
     return labels
 end
 

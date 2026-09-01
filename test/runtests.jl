@@ -68,9 +68,22 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         # Reference coordinates as plain vectors, views, and mixed containers
         r1 = chain[1]
         n, cα, c = r1["N"].coords, r1["CA"].coords, r1["C"].coords
-        @test atomcoordinates(bp, dihedrals, n, cα, c) == X
-        @test atomcoordinates(bp, dihedrals, view(n, :), SVector{3}(cα), c) == X
-        @test_throws DimensionMismatch atomcoordinates(bp, dihedrals, n[1:2], cα, c)
+        @test atomcoordinates(bp, dihedrals, (n, cα, c)) == X
+        @test atomcoordinates(bp, dihedrals, (view(n, :), SVector{3}(cα), c)) == X
+        @test atomcoordinates(bp, dihedrals, (r1["N"], r1["CA"], r1["C"])) == X
+        @test_throws DimensionMismatch atomcoordinates(bp, dihedrals, (n[1:2], cα, c))
+        @test_throws MethodError atomcoordinates(bp, dihedrals, (r1["N"], cα, c))
+
+        # In-place decode supports each frame form.
+        Xbuf = similar(X)
+        @test atomcoordinates!(Xbuf, bp, dihedrals, chain) === Xbuf
+        @test Xbuf == X
+        @test atomcoordinates!(fill!(Xbuf, zero(eltype(X))), bp, dihedrals, (n, cα, c)) == X
+        @test atomcoordinates!(fill!(Xbuf, zero(eltype(X))), bp, dihedrals, (r1["N"], r1["CA"], r1["C"])) == X
+        @test atomcoordinates!(fill!(Xbuf, zero(eltype(X))), bp, dihedrals) == atomcoordinates(bp, dihedrals)
+        @test_throws DimensionMismatch atomcoordinates!(similar(X, length(X) - 1), bp, dihedrals, chain)
+        @test_throws DimensionMismatch atomcoordinates!(Xbuf, bp, dihedrals[1:end-1], chain)
+        @test_throws "reference N–Cα distance" atomcoordinates!(Xbuf, bp, dihedrals, (n, cα .+ 0.5, c))
     end
 
     @testset "show" begin
@@ -115,7 +128,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         steps[k] = DihedralParametrization.Extend{Float64}(
             s.predecessors, s.aidx, s.ℓcd, s.θbcd, !s.rotatable, s.ϕ)
         bpmod = BondParametrization{Float64}(
-            bp1.atoms, bp1.nres, bp1.ℓnca, bp1.ℓcac, bp1.θncac, steps, bp1.ndihedrals)
+            bp1.atoms, bp1.nres, bp1.ℓnca, bp1.ℓcac, bp1.θncac, steps, bp1.ndihedrals - 1)
         @test bpmod != bp1
         @test steps[k] != s
         @test hash(steps[k]) != hash(s)
@@ -199,6 +212,20 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws DimensionMismatch dihedralangles(bp, X[1:end-1])
         @test_throws DimensionMismatch dihedralangles(bp, push!(copy(X), X[end]))
 
+        # Other 3-vector element types are converted.
+        Xm = MVector{3}.(X)
+        @test dihedralangles(bp, Xm) == dihedralangles(bp, X)
+        @test dihedralangles!(similar(dihedrals), bp, Xm) == dihedralangles(bp, X)
+        @test dihedralangles(bp, Vector.(X)) == dihedralangles(bp, X)
+        @test_throws DimensionMismatch dihedralangles(bp, [x[1:2] for x in X])
+
+        # In-place encode.
+        dbuf = similar(dihedrals)
+        @test dihedralangles!(dbuf, bp, X) === dbuf
+        @test dbuf == dihedralangles(bp, X)
+        @test_throws DimensionMismatch dihedralangles!(dbuf[1:end-1], bp, X)
+        @test_throws DimensionMismatch dihedralangles!(dbuf, bp, X[1:end-1])
+
         # A chain whose atom count differs from the parametrization's.
         strucshort = read(path, MMCIFFormat)
         specializeresnames!(strucshort)
@@ -280,25 +307,66 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test length(X32) == length(bp32.atoms)
         @test eltype(X32) === SVector{3,Float64}
         @test isapprox(X32, X; rtol=1e-4)
+        # A frame with mixed element types promotes before the specialized
+        # method runs.
+        Xmixed = atomcoordinates(bp32, d32, (Float32.(n), ca, c))
+        @test eltype(Xmixed) === SVector{3,Float64}
+        @test isapprox(Xmixed, X; rtol=1e-4)
+        # Converting constructor and `convert`.
+        bp32c = BondParametrization{Float32}(bp)
+        @test eltype(bp32c) === Float32
+        @test bp32c == bp32
+        @test isapprox(atomcoordinates(bp32c, d32, chain), X; rtol=1e-4)
+        @test convert(BondParametrization{Float32}, bp) == bp32c
+        @test convert(BondParametrization{Float64}, bp) === bp
+        bpcopy = BondParametrization{Float64}(bp)
+        @test bpcopy == bp && bpcopy !== bp
+        @test bpcopy.steps !== bp.steps && bpcopy.atoms !== bp.atoms
+        bp64 = BondParametrization{Float64}(bp32c)
+        @test eltype(bp64) === Float64
+        @test bp64.atoms == bp.atoms && bp64.nres == bp.nres && bp64.ndihedrals == bp.ndihedrals
+        @test isapprox(bp64.ℓnca, bp.ℓnca; rtol=1e-6) && isapprox(bp64.ℓcac, bp.ℓcac; rtol=1e-6) &&
+              isapprox(bp64.θncac, bp.θncac; rtol=1e-6)
+        @test all(zip(bp64.steps, bp.steps)) do (s64, s)
+            s64.predecessors == s.predecessors && s64.aidx == s.aidx &&
+                (s isa DihedralParametrization.Extend ?
+                    (s64 isa DihedralParametrization.Extend && s64.rotatable == s.rotatable &&
+                     isapprox(s64.ℓcd, s.ℓcd; rtol=1e-6) && isapprox(s64.θbcd, s.θbcd; rtol=1e-6) &&
+                     isapprox(s64.ϕ, s.ϕ; atol=1e-5)) :
+                    (s64 isa DihedralParametrization.Branch && isapprox(s64.βs, s.βs; rtol=1e-6)))
+        end
+        # A dual-number `bp` differentiates with respect to the bond geometry.
+        D = typeof(ForwardDiff.Dual(1.0, 1.0))
+        bpdual = BondParametrization{D}(bp)
+        @test eltype(bpdual) === D
+        @test eltype(atomcoordinates(bpdual, dihedrals)) <: SVector{3,<:ForwardDiff.Dual}
+
+        # The in-place form stores into whatever element type `X` has.
+        Xbuf32 = Vector{SVector{3,Float32}}(undef, length(X))
+        @test atomcoordinates!(Xbuf32, bp, dihedrals, chain) === Xbuf32
+        @test isapprox(Xbuf32, X; rtol=1e-5)
+        @test @inferred(atomcoordinates!(Xbuf32, bp, dihedrals, (n, ca, c))) === Xbuf32
 
         # Dual-number references propagate into the result.
         dual(x) = SVector{3}(ForwardDiff.Dual.(x, 1.0))
-        Xdual = atomcoordinates(bp, dihedrals, dual(n), dual(ca), dual(c))
+        Xdual = atomcoordinates(bp, dihedrals, (dual(n), dual(ca), dual(c)))
         @test length(Xdual) == length(bp.atoms)
         @test eltype(Xdual) <: SVector{3,<:ForwardDiff.Dual}
         @test all(x -> isapprox(ForwardDiff.value.(x[1]), x[2]; atol=1e-8), zip(Xdual, X))
 
-        @test @inferred(atomcoordinates(bp, dihedrals, n, ca, c)) == X
+        @test @inferred(atomcoordinates(bp, dihedrals, (n, ca, c))) == X
         dualdihedrals = ForwardDiff.Dual.(dihedrals, 1.0)
-        @test eltype(@inferred(atomcoordinates(bp, dualdihedrals, n, ca, c))) <: SVector{3,<:ForwardDiff.Dual}
+        @test eltype(@inferred(atomcoordinates(bp, dualdihedrals, (n, ca, c)))) <: SVector{3,<:ForwardDiff.Dual}
 
         # `dihedrals` may be any AbstractVector.
         @test atomcoordinates(bp, view(dihedrals, :), chain) == X
 
         # A `bp` whose steps leave an atom unplaced is rejected by both
         # traversals.
+        badsteps = bp.steps[1:end-1]
         badbp = BondParametrization{Float64}(
-            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps[1:end-1], bp.ndihedrals)
+            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, badsteps,
+            count(s -> s isa DihedralParametrization.Extend && s.rotatable, badsteps))
         @test_throws ArgumentError atomcoordinates(badbp, dihedrals, chain)
         @test_throws "atoms but bp.atoms has" atomcoordinates(badbp, dihedrals, chain)
         @test_throws ArgumentError jacobianplan(badbp)
@@ -517,22 +585,39 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
 
         plan = jacobianplan(bp)
         @test plan.ndih == length(dihedrals)
+        @test ndihedrals(plan) == ndihedrals(bp) == length(dihedrals)
+        @test natoms(plan) == natoms(bp) == length(bp.atoms)
 
         # Compare with ForwardDiff at two configurations.
-        X = atomcoordinates(bp, dihedrals, n, cα, c)
+        X = atomcoordinates(bp, dihedrals, (n, cα, c))
         J = coordinatejacobian(plan, X)
-        Jad = ForwardDiff.jacobian(θ -> flatten(atomcoordinates(bp, collect(θ), n, cα, c)), dihedrals)
+        Jad = ForwardDiff.jacobian(θ -> flatten(atomcoordinates(bp, collect(θ), (n, cα, c))), dihedrals)
         @test isapprox(J, Jad; rtol=1e-10)
 
         rng = Random.Xoshiro(42)
         θpert = dihedrals .+ 0.3 .* randn(rng, length(dihedrals))
-        Xpert = atomcoordinates(bp, θpert, n, cα, c)
+        Xpert = atomcoordinates(bp, θpert, (n, cα, c))
         Jpert = coordinatejacobian(plan, Xpert)
-        Jadpert = ForwardDiff.jacobian(θ -> flatten(atomcoordinates(bp, collect(θ), n, cα, c)), θpert)
+        Jadpert = ForwardDiff.jacobian(θ -> flatten(atomcoordinates(bp, collect(θ), (n, cα, c))), θpert)
         @test isapprox(Jpert, Jadpert; rtol=1e-10)
 
         Jsmall = zeros(size(Jpert) .- 1)
         @test_throws DimensionMismatch coordinatejacobian!(Jsmall, plan, Xpert)
+
+        # Other 3-vector element types are converted.
+        let Xm = MVector{3}.(Xpert), rngm = Random.Xoshiro(7),
+            wm = [randn(rngm, MVector{3,Float64}) for _ = 1:natoms(plan)], vm = randn(rngm, ndihedrals(plan))
+
+            @test coordinatejacobian(plan, Xm) == Jpert
+            @test coordinatejacobian!(similar(Jpert), plan, Xm) == Jpert
+            @test vjp(plan, Xm, wm) == vjp(plan, Xpert, SVector{3}.(wm))
+            @test vjp!(zeros(ndihedrals(plan)), plan, Xpert, wm) == vjp(plan, Xpert, SVector{3}.(wm))
+            @test jvp(plan, Xm, vm) == jvp(plan, Xpert, vm)
+            @test jvp!([zero(SVector{3,Float64}) for _ = 1:natoms(plan)], plan, Xm, vm) == jvp(plan, Xpert, vm)
+            @test weightedhessian(plan, Xm, wm) == weightedhessian(plan, Xpert, SVector{3}.(wm))
+            @test weightedhessian!(zeros(ndihedrals(plan), ndihedrals(plan)), plan, Xm, wm) ==
+                  weightedhessian(plan, Xpert, SVector{3}.(wm))
+        end
 
         # Compare products with the explicit Jacobian.
         for _ = 1:3
@@ -600,7 +685,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         function fdcolumn(k; h=1e-6)
             θp = copy(dihedrals); θp[k] += h
             θm = copy(dihedrals); θm[k] -= h
-            return (flatten(atomcoordinates(bp, θp, n, cα, c)) .- flatten(atomcoordinates(bp, θm, n, cα, c))) ./ 2h
+            return (flatten(atomcoordinates(bp, θp, (n, cα, c))) .- flatten(atomcoordinates(bp, θm, (n, cα, c)))) ./ 2h
         end
         for k in (1, cld(plan.ndih, 2), plan.ndih)
             @test isapprox(fdcolumn(k), J[:, k]; rtol=1e-6, atol=1e-6)
@@ -631,10 +716,10 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         rng = Random.Xoshiro(11)
         w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
         wf = flatten(w)
-        objective(bp, n, cα, c, w, θ) = dot(wf, flatten(atomcoordinates(bp, collect(θ), n, cα, c)))
+        objective(bp, n, cα, c, w, θ) = dot(wf, flatten(atomcoordinates(bp, collect(θ), (n, cα, c))))
 
         # Native configuration.
-        X = atomcoordinates(bp, dihedrals, n, cα, c)
+        X = atomcoordinates(bp, dihedrals, (n, cα, c))
         S = weightedhessian(plan, X, w)
         @test issymmetric(S)
         Had = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), dihedrals)
@@ -643,7 +728,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
 
         # Perturbed configuration.
         θpert = dihedrals .+ 0.3 .* randn(rng, length(dihedrals))
-        Xpert = atomcoordinates(bp, θpert, n, cα, c)
+        Xpert = atomcoordinates(bp, θpert, (n, cα, c))
         Spert = weightedhessian(plan, Xpert, w)
         @test issymmetric(Spert)
         Hadpert = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), θpert)
@@ -661,7 +746,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         w2f = flatten(w2)
         S2 = weightedhessian(plan, Xpert, w2)
         @test issymmetric(S2)
-        Had2 = ForwardDiff.hessian(θ -> dot(w2f, flatten(atomcoordinates(bp, collect(θ), n, cα, c))), θpert)
+        Had2 = ForwardDiff.hessian(θ -> dot(w2f, flatten(atomcoordinates(bp, collect(θ), (n, cα, c)))), θpert)
         @test isapprox(S2, Had2; rtol=1e-10)
 
         # Dimension mismatches.
@@ -683,12 +768,12 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         ncyx = SVector{3}(rescyx[1]["N"].coords)
         cαcyx = SVector{3}(rescyx[1]["CA"].coords)
         ccyx = SVector{3}(rescyx[1]["C"].coords)
-        Xcyx = atomcoordinates(bpcyx, dihedralscyx, ncyx, cαcyx, ccyx)
+        Xcyx = atomcoordinates(bpcyx, dihedralscyx, (ncyx, cαcyx, ccyx))
         wcyx = [randn(rng, SVector{3,Float64}) for _ = 1:plancyx.natoms]
         wcyxf = flatten(wcyx)
         Scyx = weightedhessian(plancyx, Xcyx, wcyx)
         @test issymmetric(Scyx)
-        Hadcyx = ForwardDiff.hessian(θ -> dot(wcyxf, flatten(atomcoordinates(bpcyx, collect(θ), ncyx, cαcyx, ccyx))), dihedralscyx)
+        Hadcyx = ForwardDiff.hessian(θ -> dot(wcyxf, flatten(atomcoordinates(bpcyx, collect(θ), (ncyx, cαcyx, ccyx)))), dihedralscyx)
         @test isapprox(Scyx, Hadcyx; rtol=1e-10)
     end
 
@@ -800,18 +885,20 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             @test_throws "which the parametrization does not describe" buildchain(c, bp, X)
         end
 
+        @test [a.coords for a in collectatoms(buildchain(chain, bp, MVector{3}.(X)))] ==
+              [a.coords for a in collectatoms(buildchain(chain, bp, X))]
         @test_throws DimensionMismatch buildchain(chain, bp, X[1:end-1])
         @test_throws DimensionMismatch buildchain(chain, bp, push!(copy(X), X[end]))
 
         # Reference coordinates must match the geometry `bp` records.
         n, cα, c = X[1], X[2], X[3]
-        @test_throws ArgumentError atomcoordinates(bp, dihedrals, n, cα .+ 0.5, c)
-        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, n, cα .+ 0.5, c)
-        @test_throws "reference Cα–C distance" atomcoordinates(bp, dihedrals, n, cα, c .+ 0.5)
+        @test_throws ArgumentError atomcoordinates(bp, dihedrals, (n, cα .+ 0.5, c))
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, (n, cα .+ 0.5, c))
+        @test_throws "reference Cα–C distance" atomcoordinates(bp, dihedrals, (n, cα, c .+ 0.5))
         let axis = normalize(cross(c - cα, n - cα)),
             ctilt = cα + norm(c - cα) * normalize(normalize(c - cα) + 0.3 * axis)
 
-            @test_throws "reference N–Cα–C angle" atomcoordinates(bp, dihedrals, n, cα, ctilt)
+            @test_throws "reference N–Cα–C angle" atomcoordinates(bp, dihedrals, (n, cα, ctilt))
         end
 
         # A step whose frame mixes independent rotation chains cannot be
@@ -831,16 +918,11 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             @test_throws "mixed frame the analytic Jacobian cannot represent" jacobianplan(bpmixed)
         end
 
-        # A `bp` that miscounts its own rotatable steps.
-        let bpcount = BondParametrization{Float64}(
-                bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps, bp.ndihedrals + 1)
-
-            @test_throws ArgumentError dihedralangles(bpcount, X)
-            @test_throws "rotatable steps but bp declares" dihedralangles(bpcount, X)
-            @test_throws "rotatable steps but bp declares" dihedrallabels(bpcount)
-            @test_throws ArgumentError jacobianplan(bpcount)
-            @test_throws "dihedral columns but bp declares" jacobianplan(bpcount)
-        end
+        # Reject inconsistent dihedral counts.
+        @test_throws ArgumentError BondParametrization{Float64}(
+            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps, bp.ndihedrals + 1)
+        @test_throws "rotatable steps but ndihedrals" BondParametrization{Float64}(
+            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps, bp.ndihedrals - 1)
 
         # A `bp` whose steps are not in build order.
         let steps = copy(bp.steps)

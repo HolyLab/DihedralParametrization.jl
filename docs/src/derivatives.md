@@ -4,7 +4,7 @@ CurrentModule = DihedralParametrization
 
 # Derivatives
 
-For `X = atomcoordinates(bp, θ, n, cα, c)`, the package provides the
+For `X = atomcoordinates(bp, θ, (n, cα, c))`, the package provides the
 Jacobian `J = ∂X/∂θ` and products involving its first and second
 derivatives. Each rotatable dihedral rotates its dependent atoms about a fixed
 axis. Thus `∂X[t]/∂θ_k` is zero when `k` does not affect atom `t`; otherwise,
@@ -34,8 +34,8 @@ as nested rigid rotations.
   `ndih × ndih` Hessian of `w ⋅ X`, not a Hessian-vector product.
 
 These functions take a `JacobianPlan` and coordinates `X`; call
-`atomcoordinates` first. The vector products also take a per-atom vector `w`
-or per-dihedral vector `v`.
+`atomcoordinates` (or, to reuse a buffer, `atomcoordinates!`) first. The
+vector products also take a per-atom vector `w` or per-dihedral vector `v`.
 
 ## Worked example: gradient of a coordinate objective
 
@@ -50,18 +50,18 @@ chain = struc["A"]
 bp, dihedrals = bondparametrization(chain)
 plan = jacobianplan(bp)
 
-n, cα, c = chain[1]["N"].coords, chain[1]["CA"].coords, chain[1]["C"].coords
+frame = (chain[1]["N"], chain[1]["CA"], chain[1]["C"])
 
-function objective_and_grad(bp, plan, θ, n, cα, c, target)
-    X = atomcoordinates(bp, θ, n, cα, c)
+function objective_and_grad(bp, plan, θ, frame, target)
+    X = atomcoordinates(bp, θ, frame)
     w = X .- target                     # gradient of (1/2) Σ |X - target|² w.r.t. X
     val = 0.5 * sum(v -> sum(abs2, v), w)
-    g = vjp!(zeros(plan.ndih), plan, X, w)
+    g = vjp!(zeros(ndihedrals(plan)), plan, X, w)
     return val, g
 end
 
-target = atomcoordinates(bp, dihedrals, n, cα, c)  # a structure to match
-val, g = objective_and_grad(bp, plan, dihedrals, n, cα, c, target)
+target = atomcoordinates(bp, dihedrals, frame)  # a structure to match
+val, g = objective_and_grad(bp, plan, dihedrals, frame, target)
 ```
 
 `g` is the gradient of `val` with respect to `dihedrals`.
@@ -102,6 +102,7 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   layout: for `X::Vector{SVector{3,T}}`, `reinterpret(T, X)` is the
   corresponding flat vector of length `3*natoms`, and
   `reinterpret(reshape, T, X)` is the same data as a `3 × natoms` matrix.
+  Other 3-vector types are converted to `SVector{3,T}` on entry.
 
   A per-atom cotangent `w::Vector{SVector{3,T}}` flattens the same way, so
 
