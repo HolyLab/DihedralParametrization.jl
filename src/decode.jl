@@ -56,10 +56,10 @@ function frametuple((n, cα, c)::NTuple{3,AbstractVector})
     T = promote_type(eltype(n), eltype(cα), eltype(c))
     return (SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
 end
-frametuple(frame::NTuple{3,Atom}) = frametuple(map(a -> a.coords, frame))
+frametuple(frame::NTuple{3,AbstractAtom}) = frametuple(map(coords, frame))
 function frametuple(chain::Chain)
-    nter = first(chain)::Residue
-    return frametuple((nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom))
+    nter = first(chain)::AbstractResidue
+    return frametuple((nter["N"]::AbstractAtom, nter["CA"]::AbstractAtom, nter["C"]::AbstractAtom))
 end
 
 # The frame with residue 1's N at the origin, Cα on the positive x-axis, and
@@ -81,10 +81,10 @@ Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
 and a reference frame given by residue 1's backbone N, Cα, and C. Results
 follow the order of `bp.atoms`.
 
-The frame may be a tuple `(n, cα, c)` of three 3-vectors or three `Atom`s,
-or a `Chain` whose first residue supplies the atoms. The two-argument form
-places residue 1's N at the origin, Cα on the positive x-axis, and C in the
-xy-plane with positive y.
+The frame may be a tuple `(n, cα, c)` of three 3-vectors or three
+BioStructures atoms, or a `Chain` whose first residue supplies the atoms.
+The two-argument form places residue 1's N at the origin, Cα on the positive
+x-axis, and C in the xy-plane with positive y.
 
 `length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
 thrown otherwise. Reference coordinates whose N–Cα distance, Cα–C distance,
@@ -99,8 +99,9 @@ See [`atomcoordinates!`](@ref) for the in-place form.
 # Extended help
 
 Reference coordinates are converted to `SVector{3,T}` using their promoted
-element type. A tuple of `Atom`s contributes each atom's `coords`; the
-`Chain` method uses the first residue's N, CA, and C atoms.
+element type. A tuple of atoms contributes each atom's `coords` (for a
+`DisorderedAtom`, its default alternate location); the `Chain` method uses
+the first residue's N, CA, and C atoms.
 """
 function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame)
     n, cα, c = frametuple(frame)
@@ -176,7 +177,8 @@ and overwritten, like the destination argument of `copyto!`.
 
 `length(X)` must equal `length(bp.atoms)`; a `DimensionMismatch` is thrown
 otherwise. An atom of `reference` that `bp.atoms` does not name raises an
-`ArgumentError`.
+`ArgumentError`. A `DisorderedAtom` has only its default alternate location
+overwritten, and a `DisorderedResidue` only its default residue.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
     length(X) == length(bp.atoms) ||
@@ -191,7 +193,7 @@ function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector
         i = get(coordidx, akey, nothing)
         i === nothing &&
             throw(ArgumentError("reference has atom $(akey.aname) in residue $(akey.resnum), which the parametrization does not describe"))
-        a.coords .= X[i]
+        coords!(a, X[i])
     end
     return out
 end

@@ -401,6 +401,57 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test all(k -> isapprox(wrap(dihedralspert[k] - θpert[k]), 0; atol=1e-8), eachindex(dihedrals))
     end
 
+    @testset "Alternate locations and disordered residues" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        function loadchain()
+            struc = read(path, MMCIFFormat)
+            specializeresnames!(struc)
+            return only(only(struc))
+        end
+        chain = loadchain()
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+        ipos = 8
+
+        # Every entry point agrees with the undisordered chain, and
+        # `buildchain` keeps the disordered structure.
+        function checkdisordered(chaind)
+            bpd, dihedralsd = bondparametrization(chaind)
+            @test bpd == bp
+            @test dihedralsd == dihedrals
+            @test dihedralangles(bp, chaind) == dihedrals
+            @test atomcoordinates(bp, dihedrals, chaind) == X
+            return buildchain(chaind, bp, X)
+        end
+
+        # A `DisorderedAtom` resolves to its default alternate location.
+        chainalt = loadchain()
+        r = collectresidues(chainalt)[ipos]
+        a = r["CA"]
+        altA = BioStructures.Atom(a.serial, a.name, 'A', copy(a.coords), 0.6, a.temp_factor, a.element, a.charge, r)
+        altB = BioStructures.Atom(a.serial, a.name, 'B', a.coords .+ 0.3, 0.4, a.temp_factor, a.element, a.charge, r)
+        r["CA"] = DisorderedAtom(Dict('A' => altA, 'B' => altB), 'A')
+        @test isdisorderedatom(r["CA"])
+        rebuilt = checkdisordered(chainalt)
+        ca = collectresidues(rebuilt)[ipos]["CA"]
+        @test isdisorderedatom(ca)
+        @test isapprox(coords(ca), coords(a); atol=1e-8)
+        @test coords(ca['B']) == coords(altB)   # the non-default location is untouched
+
+        # A `DisorderedResidue` resolves to its default residue.
+        chaindis = loadchain()
+        r = collectresidues(chaindis)[ipos]
+        ralt = BioStructures.Residue(r, chaindis)
+        ralt.name = "XYZ"
+        chaindis.residues[resid(r)] = DisorderedResidue(Dict(resname(r) => r, "XYZ" => ralt), resname(r))
+        @test isdisorderedres(chaindis[resnumber(r)])
+        rebuilt = checkdisordered(chaindis)
+        rd = collectresidues(rebuilt)[ipos]
+        @test isdisorderedres(rd)
+        @test resname(rd) == resname(r)
+        @test all(isapprox(coords(rd[name]), coords(r[name]); atol=1e-8) for name in atomnames(r))
+    end
+
     @testset "2QMT (experimental structure)" begin
         # Provenance: test/data/README.md.
         path = joinpath(@__DIR__, "data", "2qmt_H.cif")
@@ -457,6 +508,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         # Missing template atoms report residue context.
         cysfree.name = "CYS"
         delete!(cysfree.atoms, "HG")
+        deleteat!(cysfree.atom_list, findfirst(==("HG"), cysfree.atom_list))
         @test_throws ArgumentError bondparametrization(chainfree)
         @test_throws "cannot find atom \"HG\"" bondparametrization(chainfree)
     end
