@@ -117,6 +117,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             ℓ = norm(dgt - c)
             drc = DihedralParametrization.snnerf(a, b, c, ℓ, θ, ϕ)
             @test isapprox(drc, dgt; atol=1e-8)
+            @test DihedralParametrization.snnerf(a, b, c, ℓ, θ, sincos(ϕ)) == drc
             βs = DihedralParametrization.betas(a, b, c, [dgt])
             drc = only(DihedralParametrization.add_to_middle!([zero(a)], 1, a, b, c, βs))
             @test isapprox(drc, dgt; atol=1e-8)
