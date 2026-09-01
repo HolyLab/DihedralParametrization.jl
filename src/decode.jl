@@ -70,8 +70,8 @@ function canonicalframe(bp::BondParametrization{T}) where {T}
 end
 
 """
-    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c))
-    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c); rtol, atol)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain; rtol, atol)
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector)
 
 Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
@@ -83,10 +83,9 @@ BioStructures atoms, or a `Chain` whose first residue supplies the atoms.
 The two-argument form places residue 1's N at the origin, Cα on the positive
 x-axis, and C in the xy-plane with positive y.
 
-`length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
-thrown otherwise. Reference coordinates whose N–Cα distance, Cα–C distance,
-or N–Cα–C angle disagrees with `bp` raise an `ArgumentError`, as does a `bp`
-whose build sequence is inconsistent with its own atom count.
+`length(dihedrals)` must equal `ndihedrals(bp)`. The reference geometry must
+match `bp`; `rtol` and `atol` control its `isapprox` checks. For coordinates
+read from a three-decimal PDB or mmCIF file, try `atol = 1e-3`.
 `X` is a `Vector{SVector{3,R}}`, where `R` promotes the element types of
 `bp`, `dihedrals`, and the reference coordinates. This permits automatic
 differentiation types in `dihedrals`.
@@ -100,30 +99,36 @@ element type. A tuple of atoms contributes each atom's `coords` (for a
 `DisorderedAtom`, its default alternate location); the `Chain` method uses
 the first residue's N, CA, and C atoms.
 """
-function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame)
+function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame; rtol=nothing, atol=0)
     n, cα, c = frametuple(frame)
     R = promote_type(eltype(bp), eltype(dihedrals), eltype(n))
     X = Vector{SVector{3,R}}(undef, length(bp.atoms))
-    return _atomcoordinates!(X, bp, dihedrals, n, cα, c)
+    return _atomcoordinates!(X, bp, dihedrals, n, cα, c; rtol, atol)
 end
 atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector) =
     atomcoordinates(bp, dihedrals, canonicalframe(bp))
 
 """
-    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c))
-    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
+    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c); rtol, atol)
+    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, chain::Chain; rtol, atol)
     atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector)
 
 Write [`atomcoordinates`](@ref) into `X` and return it. `X` must contain
 `length(bp.atoms)` 3-vectors. Coordinates are converted to `eltype(X)`.
 """
-atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector, frame) =
-    _atomcoordinates!(X, bp, dihedrals, frametuple(frame)...)
+atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector, frame; rtol=nothing, atol=0) =
+    _atomcoordinates!(X, bp, dihedrals, frametuple(frame)...; rtol, atol)
 atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector) =
     atomcoordinates!(X, bp, dihedrals, canonicalframe(bp))
 
+# `isapprox` with its own default `rtol` when none is given (Base's default
+# depends on the operands and on whether `atol` is positive).
+frameapprox(x, y, ::Nothing, atol) = isapprox(x, y; atol)
+frameapprox(x, y, rtol, atol) = isapprox(x, y; rtol, atol)
+
 function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector,
-                           n::SVector{3,Tref}, cα::SVector{3,Tref}, c::SVector{3,Tref}) where {Tref<:Real}
+                           n::SVector{3,Tref}, cα::SVector{3,Tref}, c::SVector{3,Tref};
+                           rtol=nothing, atol=0) where {Tref<:Real}
     Base.require_one_based_indexing(X)
     # Check that the inputs are consistent with `bp`
     nd = ndihedrals(bp)
@@ -134,11 +139,11 @@ function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals
         throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $natoms atoms"))
     ℓnca, ℓcac = norm(cα - n), norm(c - cα)
     θncac = bondangle(n - cα, c - cα)
-    ℓnca ≈ bp.ℓnca ||
+    frameapprox(ℓnca, bp.ℓnca, rtol, atol) ||
         throw(ArgumentError("the reference N–Cα distance is $ℓnca but bp requires $(bp.ℓnca)"))
-    ℓcac ≈ bp.ℓcac ||
+    frameapprox(ℓcac, bp.ℓcac, rtol, atol) ||
         throw(ArgumentError("the reference Cα–C distance is $ℓcac but bp requires $(bp.ℓcac)"))
-    θncac ≈ bp.θncac ||
+    frameapprox(θncac, bp.θncac, rtol, atol) ||
         throw(ArgumentError("the reference N–Cα–C angle is $θncac but bp requires $(bp.θncac)"))
 
     # Atoms 1:3 are the reference frame; `bp.steps` places all the rest.

@@ -184,6 +184,45 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws DimensionMismatch atomcoordinates(bp, dihedrals[1:end-1])
     end
 
+    @testset "Reference-frame tolerance" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+
+        # A rigidly transformed frame passes at the default tolerance.
+        rng = Random.Xoshiro(3)
+        Q, _ = qr(randn(rng, 3, 3))
+        R = Matrix(Q)
+        det(R) < 0 && (R[:, 1] .*= -1)
+        t = SVector(1.0, -2.0, 0.5)
+        rot(x) = SVector{3}(R * x + t)
+        frame = map(rot, (X[1], X[2], X[3]))
+        Xrot = atomcoordinates(bp, dihedrals, frame)
+        @test all(isapprox(Xrot[k], rot(X[k]); atol=1e-8) for k in eachindex(X))
+
+        # A frame rounded to three decimals needs a matching tolerance.
+        rounded = map(x -> round.(x; digits=3), frame)
+        @test_throws ArgumentError atomcoordinates(bp, dihedrals, rounded)
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, rounded)
+        @test_throws "reference N–Cα distance" atomcoordinates!(similar(X), bp, dihedrals, rounded)
+        Xr = atomcoordinates(bp, dihedrals, rounded; atol=1e-3)
+        @test maximum(norm(Xr[k] - rot(X[k])) for k in eachindex(X)) < 5e-2
+        @test atomcoordinates!(similar(X), bp, dihedrals, rounded; atol=1e-3) == Xr
+        @test atomcoordinates(bp, dihedrals, rounded; rtol=1e-3) == Xr
+        @test @inferred(atomcoordinates(bp, dihedrals, rounded; atol=1e-3)) == Xr
+        @test @inferred(atomcoordinates!(similar(X), bp, dihedrals, rounded; rtol=1e-3, atol=1e-3)) == Xr
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, rounded; atol=1e-6)
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, rounded; rtol=1e-6)
+
+        # The keywords reach the `Chain` and atom-tuple forms.
+        @test atomcoordinates(bp, dihedrals, chain; atol=1e-3) == X
+        r1 = chain[1]
+        @test atomcoordinates(bp, dihedrals, (r1["N"], r1["CA"], r1["C"]); rtol=1e-3) == X
+    end
+
     @testset "dihedralangles" begin
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)
