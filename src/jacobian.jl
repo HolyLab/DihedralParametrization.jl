@@ -32,6 +32,10 @@ end
 
 Base.show(io::IO, plan::JacobianPlan) = print(io, "JacobianPlan with $(plan.natoms) atoms and $(plan.ndih) dihedrals")
 
+Base.:(==)(x::JacobianPlan, y::JacobianPlan) = _fieldsmatch(==, x, y)
+Base.isequal(x::JacobianPlan, y::JacobianPlan) = _fieldsmatch(isequal, x, y)
+Base.hash(x::JacobianPlan, h::UInt) = _hashfields(x, hash(:JacobianPlan, h))
+
 # Name one atom of `bp` for an error message.
 _atomdesc(bp::BondParametrization, t::Int) =
     (a = bp.atoms[t]; "residue $(a.resnum) $(a.aname)")

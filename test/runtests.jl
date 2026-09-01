@@ -89,6 +89,97 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
               "JacobianPlan with $(length(bp.atoms)) atoms and $(ndihedrals(bp)) dihedrals"
     end
 
+    @testset "Equality and hashing" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+
+        # Two parametrizations of the same chain are interchangeable values.
+        bp1, _ = bondparametrization(chain)
+        bp2, _ = bondparametrization(chain)
+        @test bp1 == bp2
+        @test isequal(bp1, bp2)
+        @test hash(bp1) == hash(bp2)
+
+        bpcopy = deepcopy(bp1)
+        @test bp1 == bpcopy
+        @test isequal(bp1, bpcopy)
+        @test hash(bp1) == hash(bpcopy)
+
+        plan1, plan2 = jacobianplan(bp1), jacobianplan(bp2)
+        @test plan1 == plan2
+        @test isequal(plan1, plan2)
+        @test hash(plan1) == hash(plan2)
+
+        # Changing one step's rotatability changes the parametrization.
+        steps = copy(bp1.steps)
+        k = findfirst(s -> s isa DihedralParametrization.Extend && s.rotatable, steps)
+        s = steps[k]
+        steps[k] = DihedralParametrization.Extend{Float64}(
+            s.predecessors, s.aidx, s.ℓcd, s.θbcd, !s.rotatable, s.ϕ)
+        bpmod = BondParametrization{Float64}(
+            bp1.atoms, bp1.nres, bp1.ℓnca, bp1.ℓcac, bp1.θncac, steps, bp1.ndihedrals)
+        @test bpmod != bp1
+        @test steps[k] != s
+        @test hash(steps[k]) != hash(s)
+
+        # A `Branch` compares by the contents of its coefficient vector.
+        b = bp1.steps[findfirst(s -> s isa DihedralParametrization.Branch, bp1.steps)]
+        bsame = DihedralParametrization.Branch{Float64}(b.predecessors, b.aidx, copy(b.βs))
+        @test bsame == b
+        @test isequal(bsame, b)
+        @test hash(bsame) == hash(b)
+    end
+
+    @testset "Canonical reference frame" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+
+        X = atomcoordinates(bp, dihedrals)
+        @test length(X) == length(bp.atoms)
+        @test eltype(X) === SVector{3,Float64}
+
+        # N at the origin, Cα on +x, C in the xy plane at positive y.
+        @test X[1] == zero(SVector{3,Float64})
+        @test X[2][2] == X[2][3] == 0
+        @test X[2][1] ≈ bp.ℓnca
+        @test X[3][3] == 0
+        @test X[3][2] > 0
+        @test norm(X[3] - X[2]) ≈ bp.ℓcac
+        @test bondangle(X[1] - X[2], X[3] - X[2]) ≈ bp.θncac
+
+        # The canonical configuration is the chain-referenced one, rigidly
+        # transformed: same internal coordinates, and one rotation maps it over.
+        Xref = atomcoordinates(bp, dihedrals, chain)
+        @test dihedralangles(bp, X) ≈ dihedralangles(bp, Xref) atol=1e-8
+        for k = 1:3, t in eachindex(X)
+            @test norm(X[t] - X[k]) ≈ norm(Xref[t] - Xref[k]) atol=1e-8
+        end
+
+        function orthonormalframe(Y)
+            e1 = Y[2] - Y[1]
+            e1 /= norm(e1)
+            e2 = Y[3] - Y[1]
+            e2 -= dot(e2, e1) * e1
+            e2 /= norm(e2)
+            return hcat(e1, e2, cross(e1, e2))
+        end
+        R = orthonormalframe(Xref) * orthonormalframe(X)'
+        @test det(R) ≈ 1
+        @test all(t -> isapprox(R * (X[t] - X[1]) + Xref[1], Xref[t]; atol=1e-8), eachindex(X))
+
+        # A Float32 parametrization builds its frame in Float32.
+        bp32, d32 = bondparametrization(Float32, chain)
+        @test eltype(atomcoordinates(bp32, d32)) === SVector{3,Float32}
+        @test eltype(atomcoordinates(bp32, Float64.(d32))) === SVector{3,Float64}
+
+        @test_throws DimensionMismatch atomcoordinates(bp, dihedrals[1:end-1])
+    end
+
     @testset "dihedralangles" begin
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)

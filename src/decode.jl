@@ -56,10 +56,17 @@ add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs) =
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::Atom, cα::Atom, c::Atom)
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector)
 
 Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
 and the first backbone N, Cα, and C coordinates. Results follow the order of
 `bp.atoms`.
+
+The two-argument form places the reference frame canonically: residue 1's N
+is at the origin, its Cα is on the `+x` axis at `(bp.ℓnca, 0, 0)`, and its C
+lies in the `xy` plane at positive `y`, a distance `bp.ℓcac` from Cα and
+making the angle `bp.θncac` with the N–Cα bond at Cα. Two configurations
+built this way are directly comparable, without a superposition step.
 
 `length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
 thrown otherwise. The element type of `dihedrals` is independent of the
@@ -112,6 +119,13 @@ function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::
     return atomcoordinates(bp, dihedrals, SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
 end
 atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::Atom, cα::Atom, c::Atom) = atomcoordinates(bp, dihedrals, n.coords, cα.coords, c.coords)
+function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector) where {T<:Real}
+    sθ, cθ = sincos(bp.θncac)
+    n = zero(SVector{3,T})
+    cα = SVector{3,T}(bp.ℓnca, zero(T), zero(T))
+    c = SVector{3,T}(bp.ℓnca - bp.ℓcac * cθ, bp.ℓcac * sθ, zero(T))
+    return atomcoordinates(bp, dihedrals, n, cα, c)
+end
 function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
     nter = first(chain)::Residue
     return atomcoordinates(bp, dihedrals, nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom)

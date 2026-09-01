@@ -20,6 +20,12 @@ function AtomKey(a::Atom)
     return AtomKey(parse(Int, resid(residue(a); full=false)), Symbol(aname))
 end
 
+# Compare or hash every field of a build step, a `BondParametrization`, or a
+# `JacobianPlan`. These types own `Vector` fields, so the fallback `==`,
+# `isequal`, and `hash` would test identity rather than contents.
+_fieldsmatch(eq, x, y) = all(f -> eq(getfield(x, f), getfield(y, f)), fieldnames(typeof(x)))
+_hashfields(x, h::UInt) = foldr((f, h) -> hash(getfield(x, f), h), fieldnames(typeof(x)); init=h)
+
 # A build step that places one atom `d` by extending the chain `a-b-c-d` with
 # the SN-NeRF formula (see `snnerf`): `predecessors` are the indices into the
 # coordinate vector of the already-placed atoms `a`, `b`, `c`, and `aidx` is
@@ -36,6 +42,10 @@ struct Extend{T}
     ϕ::T  # fixed (or original) dihedral angle, only used if not rotatable
 end
 
+Base.:(==)(x::Extend, y::Extend) = _fieldsmatch(==, x, y)
+Base.isequal(x::Extend, y::Extend) = _fieldsmatch(isequal, x, y)
+Base.hash(x::Extend, h::UInt) = _hashfields(x, hash(:Extend, h))
+
 # A build step that places one or more atoms in a fixed (non-rotatable)
 # tetrahedral-style geometry from already-placed atoms `a`, `b`, `c` (indexed
 # by `predecessors`), via `add_to_middle!`. `βs` holds each new atom's
@@ -46,6 +56,10 @@ struct Branch{T}
     aidx::Int                                     # index in X of the first atom this step places
     βs::Vector{SVector{3,T}}                      # coefficients for placement from a, b, c
 end
+
+Base.:(==)(x::Branch, y::Branch) = _fieldsmatch(==, x, y)
+Base.isequal(x::Branch, y::Branch) = _fieldsmatch(isequal, x, y)
+Base.hash(x::Branch, h::UInt) = _hashfields(x, hash(:Branch, h))
 
 """
     BondParametrization{T<:Real}
@@ -84,6 +98,10 @@ struct BondParametrization{T<:Real}
 end
 
 Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(bp.nres) residues")
+
+Base.:(==)(x::BondParametrization, y::BondParametrization) = _fieldsmatch(==, x, y)
+Base.isequal(x::BondParametrization, y::BondParametrization) = _fieldsmatch(isequal, x, y)
+Base.hash(x::BondParametrization, h::UInt) = _hashfields(x, hash(:BondParametrization, h))
 
 Base.eltype(::Type{BondParametrization{T}}) where {T} = T
 
