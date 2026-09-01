@@ -403,12 +403,8 @@ The first form stores `bp`'s bond lengths, bond angles, and fixed dihedrals
 
 Disordered atoms and residues contribute their default alternatives.
 
-An `ArgumentError` reports a chain the build tables cannot describe: an
-empty chain, an unrecognized (including nonstandard or hetero) residue
-name, a residue carrying an insertion code, a missing backbone or
-side-chain atom, a chain break or out-of-order residues that leave a
-`-`/`+` build-table reference unresolvable, or a residue with atoms the
-build tables never place.
+An `ArgumentError` reports input that the build tables cannot describe.
+See the documentation's "Prerequisites" section for the input contract.
 """
 function bondparametrization(::Type{T}, ress::AbstractVector{<:AbstractResidue}) where {T<:Real}
     ress = residuevector(ress)
