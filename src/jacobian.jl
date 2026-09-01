@@ -128,6 +128,51 @@ function _checklengths(plan::JacobianPlan, X, name)
 end
 
 """
+    ws = JacobianWorkspace(plan::JacobianPlan, T::Type = Float64)
+    ws = JacobianWorkspace{T}(plan::JacobianPlan)
+
+Scratch storage for [`vjp!`](@ref), [`jvp!`](@ref), and
+[`weightedhessian!`](@ref), sized for `plan`.
+
+Pass `ws` through the `workspace` keyword to avoid scratch allocations.
+Its element type must match the promoted input type, and its plan must have
+the same number of dihedrals.
+"""
+struct JacobianWorkspace{T}
+    # One entry per dihedral. `vjp!` uses S0 and S1 as accumulators of
+    # Σw and Σx×w; `jvp!` uses them for the cumulative rotation Ω and
+    # translation τ; `weightedhessian!` uses all five.
+    S0::Vector{SVector{3,T}}
+    S1::Vector{SVector{3,T}}
+    p::Vector{SVector{3,T}}
+    s::Vector{T}
+    M::Vector{SMatrix{3,3,T,9}}
+end
+
+function JacobianWorkspace{T}(plan::JacobianPlan) where {T}
+    n = ndihedrals(plan)
+    return JacobianWorkspace{T}(Vector{SVector{3,T}}(undef, n), Vector{SVector{3,T}}(undef, n),
+                                Vector{SVector{3,T}}(undef, n), Vector{T}(undef, n),
+                                Vector{SMatrix{3,3,T,9}}(undef, n))
+end
+JacobianWorkspace(plan::JacobianPlan, ::Type{T}=Float64) where {T} = JacobianWorkspace{T}(plan)
+
+Base.eltype(::Type{JacobianWorkspace{T}}) where {T} = T
+
+Base.show(io::IO, ws::JacobianWorkspace{T}) where {T} =
+    print(io, "JacobianWorkspace{", T, "} for ", length(ws.s), " dihedrals")
+
+# Validate a supplied workspace or allocate one.
+_workspace(::Nothing, plan::JacobianPlan, ::Type{T}) where {T} = JacobianWorkspace{T}(plan)
+function _workspace(ws::JacobianWorkspace, plan::JacobianPlan, ::Type{T}) where {T}
+    eltype(ws) === T ||
+        throw(ArgumentError("workspace has element type $(eltype(ws)) but the inputs promote to $T"))
+    length(ws.s) == plan.ndih ||
+        throw(DimensionMismatch("workspace holds $(length(ws.s)) dihedrals but plan has $(plan.ndih)"))
+    return ws
+end
+
+"""
     J = coordinatejacobian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}})
 
 Compute ∂X/∂θ as a dense `3 * length(X) × plan.ndih` matrix. The rows for
@@ -174,18 +219,24 @@ coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:A
     coordinatejacobian!(J, plan, svectors(X))
 
 """
-    g = vjp!(g, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    g = vjp!(g, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}}; workspace)
 
 Compute `g = J' * w` without forming `J`, where `J = ∂X/∂θ`. `w[t]` is the
 weight for atom `t`. Returns `g`.
+
+`workspace` is a [`JacobianWorkspace`](@ref) whose element type is the
+promoted element type of `X` and `w`; without it, one is allocated per
+call.
 """
-function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
+              workspace=nothing)
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     length(g) == plan.ndih || throw(DimensionMismatch("length(g) = $(length(g)) does not match plan's $(plan.ndih) dihedrals"))
     T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
-    S0 = fill(zero(SVector{3,T}), plan.ndih)
-    S1 = fill(zero(SVector{3,T}), plan.ndih)
+    ws = _workspace(workspace, plan, T)
+    S0 = fill!(ws.S0, zero(SVector{3,T}))
+    S1 = fill!(ws.S1, zero(SVector{3,T}))
     for t in eachindex(X)
         k = plan.deepest[t]
         k == 0 && continue
@@ -207,8 +258,8 @@ function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector
     return g
 end
 
-vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}) =
-    vjp!(g, plan, svectors(X), svectors(w))
+vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}; workspace=nothing) =
+    vjp!(g, plan, svectors(X), svectors(w); workspace)
 
 """
     g = vjp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
@@ -225,18 +276,23 @@ vjp(plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<
     vjp(plan, svectors(X), svectors(w))
 
 """
-    δx = jvp!(δx, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
+    δx = jvp!(δx, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector; workspace)
 
 Compute `δx = J * v` without forming `J`, where `J = ∂X/∂θ`. `v` has one
 entry per dihedral and `δx` one entry per atom. Returns `δx`.
+
+`workspace` is a [`JacobianWorkspace`](@ref) whose element type is the
+promoted element type of `X` and `v`; without it, one is allocated per
+call.
 """
-function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
+function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector;
+              workspace=nothing)
     _checklengths(plan, X, "X")
     length(δx) == plan.natoms || throw(DimensionMismatch("length(δx) = $(length(δx)) does not match plan's $(plan.natoms) atoms"))
     length(v) == plan.ndih || throw(DimensionMismatch("length(v) = $(length(v)) does not match plan's $(plan.ndih) dihedrals"))
     T = promote_type(eltype(eltype(X)), eltype(v))
-    Ω = Vector{SVector{3,T}}(undef, plan.ndih)
-    τ = Vector{SVector{3,T}}(undef, plan.ndih)
+    ws = _workspace(workspace, plan, T)
+    Ω, τ = ws.S0, ws.S1
     for k = 1:plan.ndih
         u, p = _axis(plan, X, k)
         pk = plan.parent[k]
@@ -252,8 +308,8 @@ function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVect
     return δx
 end
 
-jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, v::AbstractVector) =
-    jvp!(δx, plan, svectors(X), v)
+jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, v::AbstractVector; workspace=nothing) =
+    jvp!(δx, plan, svectors(X), v; workspace)
 
 """
     δx = jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
@@ -269,7 +325,7 @@ end
 jvp(plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, v::AbstractVector) = jvp(plan, svectors(X), v)
 
 """
-    S = weightedhessian!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    S = weightedhessian!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}}; workspace)
 
 Compute `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the Hessian with respect to
 the dihedrals θ of the scalar `Σ_a w[a] ⋅ X[a](θ)`, evaluated at the
@@ -280,17 +336,23 @@ map's second-derivative tensor.
 `X` and `w` each have one `SVector{3}` entry per atom, `w[t]` playing the
 same role as in `vjp!`. `S` is symmetric and is overwritten; it must have
 size `(plan.ndih, plan.ndih)`. Returns `S`.
+
+`workspace` is a [`JacobianWorkspace`](@ref) whose element type is the
+promoted element type of `X` and `w`; without it, one is allocated per
+call.
 """
-function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
+                          workspace=nothing)
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     size(S) == (plan.ndih, plan.ndih) ||
         throw(DimensionMismatch("size(S) = $(size(S)) does not match plan's $((plan.ndih, plan.ndih)) dihedrals"))
     fill!(S, zero(eltype(S)))
     T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
-    S0 = fill(zero(SVector{3,T}), plan.ndih)
-    s = zeros(T, plan.ndih)
-    M = fill(zero(SMatrix{3,3,T,9}), plan.ndih)
+    ws = _workspace(workspace, plan, T)
+    S0 = fill!(ws.S0, zero(SVector{3,T}))
+    s = fill!(ws.s, zero(T))
+    M = fill!(ws.M, zero(SMatrix{3,3,T,9}))
     for t in eachindex(X)
         k = plan.deepest[t]
         k == 0 && continue
@@ -307,8 +369,7 @@ function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVect
             M[pk] += M[k]
         end
     end
-    u = Vector{SVector{3,T}}(undef, plan.ndih)
-    p = Vector{SVector{3,T}}(undef, plan.ndih)
+    u, p = ws.S1, ws.p
     for k = 1:plan.ndih
         u[k], p[k] = _axis(plan, X, k)
     end
@@ -326,8 +387,8 @@ function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVect
     return S
 end
 
-weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}) =
-    weightedhessian!(S, plan, svectors(X), svectors(w))
+weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}; workspace=nothing) =
+    weightedhessian!(S, plan, svectors(X), svectors(w); workspace)
 
 """
     S = weightedhessian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})

@@ -787,6 +787,46 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         bpcyx, dihedralscyx = bondparametrization(chaincyx)
         plancyx = jacobianplan(bpcyx)
         @test plancyx.ndih == length(dihedralscyx)
+
+        # A preallocated workspace makes the in-place products allocation-free.
+        ws = JacobianWorkspace(plan)
+        @test ws isa JacobianWorkspace{Float64}
+        @test eltype(ws) === Float64
+        @test JacobianWorkspace{Float32}(plan) isa JacobianWorkspace{Float32}
+        @test JacobianWorkspace(plan, Float32) isa JacobianWorkspace{Float32}
+        @test sprint(show, ws) == "JacobianWorkspace{Float64} for $(ndihedrals(plan)) dihedrals"
+        w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
+        v = randn(rng, plan.ndih)
+        g = zeros(plan.ndih)
+        δx = [zero(SVector{3,Float64}) for _ = 1:plan.natoms]
+        S = zeros(plan.ndih, plan.ndih)
+        @test vjp!(g, plan, Xpert, w; workspace=ws) == vjp(plan, Xpert, w)
+        @test jvp!(δx, plan, Xpert, v; workspace=ws) == jvp(plan, Xpert, v)
+        @test weightedhessian!(S, plan, Xpert, w; workspace=ws) == weightedhessian(plan, Xpert, w)
+        # Measured inside functions: variables of this block are boxed.
+        allocvjp!(g, plan, X, w, ws) = @allocated vjp!(g, plan, X, w; workspace=ws)
+        allocjvp!(δx, plan, X, v, ws) = @allocated jvp!(δx, plan, X, v; workspace=ws)
+        allocwh!(S, plan, X, w, ws) = @allocated weightedhessian!(S, plan, X, w; workspace=ws)
+        @test allocvjp!(g, plan, Xpert, w, ws) == 0
+        @test allocjvp!(δx, plan, Xpert, v, ws) == 0
+        @test allocwh!(S, plan, Xpert, w, ws) == 0
+        # Workspaces can be reused across products.
+        @test vjp!(g, plan, Xpert, w; workspace=ws) == vjp(plan, Xpert, w)
+        # Non-SVector inputs still accept the workspace.
+        @test vjp!(g, plan, MVector{3}.(Xpert), w; workspace=ws) == vjp(plan, Xpert, w)
+
+        # A workspace of the wrong element type or built for another plan is rejected.
+        ws32 = JacobianWorkspace(plan, Float32)
+        @test_throws ArgumentError vjp!(g, plan, Xpert, w; workspace=ws32)
+        @test_throws "workspace has element type Float32 but the inputs promote to Float64" vjp!(g, plan, Xpert, w; workspace=ws32)
+        @test_throws ArgumentError jvp!(δx, plan, Xpert, v; workspace=ws32)
+        @test_throws ArgumentError weightedhessian!(S, plan, Xpert, w; workspace=ws32)
+        @test ndihedrals(plancyx) != ndihedrals(plan)
+        wscyx = JacobianWorkspace(plancyx)
+        @test_throws DimensionMismatch vjp!(g, plan, Xpert, w; workspace=wscyx)
+        @test_throws "workspace holds $(ndihedrals(plancyx)) dihedrals but plan has $(ndihedrals(plan))" vjp!(g, plan, Xpert, w; workspace=wscyx)
+        @test_throws DimensionMismatch jvp!(δx, plan, Xpert, v; workspace=wscyx)
+        @test_throws DimensionMismatch weightedhessian!(S, plan, Xpert, w; workspace=wscyx)
     end
 
     @testset "Analytic weighted Hessian" begin

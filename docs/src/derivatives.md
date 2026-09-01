@@ -37,6 +37,17 @@ These functions take a `JacobianPlan` and coordinates `X`; call
 `atomcoordinates` (or, to reuse a buffer, `atomcoordinates!`) first. The
 vector products also take a per-atom vector `w` or per-dihedral vector `v`.
 
+Reuse a [`JacobianWorkspace`](@ref) to avoid scratch allocations in `vjp!`,
+`jvp!`, and `weightedhessian!`:
+
+```julia
+ws = JacobianWorkspace(plan)          # Float64; JacobianWorkspace(plan, Float32) for Float32 inputs
+g = vjp!(zeros(ndihedrals(plan)), plan, X, w; workspace=ws)
+```
+
+Its element type must match the promoted input type, and its plan must have
+the same number of dihedrals.
+
 ## Worked example: gradient of a coordinate objective
 
 This uses `vjp!` to differentiate a squared-distance objective:

@@ -7,7 +7,7 @@ using BioStructures: AbstractAtom, AbstractResidue, Chain, atomname, atomnames, 
 using LinearAlgebra: cross, dot, norm
 using StaticArrays: SMatrix, SVector
 
-export BondParametrization, JacobianPlan
+export BondParametrization, JacobianPlan, JacobianWorkspace
 export atomcoordinates, atomcoordinates!, bondparametrization, buildchain, dihedralangles, dihedralangles!,
        dihedrallabels, natoms, ndihedrals
 export jacobianplan, coordinatejacobian, coordinatejacobian!, vjp, vjp!, jvp, jvp!
