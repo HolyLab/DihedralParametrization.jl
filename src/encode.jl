@@ -172,12 +172,21 @@ Return the number of atoms.
 """
 natoms(bp::BondParametrization) = length(bp.atoms)
 
-# Error for a residue absent from the build tables.
-unrecognized_residue_message(res::AbstractResidue) =
-    "$(resdesc(res)): unrecognized residue name — " *
-    "histidine must be disambiguated as HID/HIE/HIP, and amino-/carboxyl-terminal " *
-    "residues need an \"N\"/\"C\"-prefixed name; BioStructures.specializeresnames! " *
-    "assigns these names (see the documentation's \"Pre-requisites\" section)"
+const specializeresnames_hint =
+    "BioStructures.specializeresnames! assigns these names (see the documentation's \"Prerequisites\" section)"
+
+# Error for a residue absent from the build tables. The tables hold the 20
+# standard amino acids (histidine as HID/HIE/HIP, disulfide-bonded cysteine
+# as CYX) in plain, "N"-prefixed, and "C"-prefixed forms, so an unknown name
+# is either an undisambiguated histidine or a residue the package does not
+# support.
+function unrecognized_residue_message(res::AbstractResidue)
+    rname = resname(res)
+    base = length(rname) == 4 && rname[1] in ('N', 'C') ? rname[2:end] : rname
+    msg = "$(resdesc(res)): unrecognized residue name — "
+    base == "HIS" && return msg * "histidine must be disambiguated as HID/HIE/HIP; " * specializeresnames_hint
+    return msg * "nonstandard and hetero residues are not supported"
+end
 
 """
     resatom, aidx = resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
@@ -199,7 +208,12 @@ function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
         ok || throw(ArgumentError("$(resdesc(ress[i])): cannot resolve build-step reference \"$ref\" — " *
                                   (1 <= j <= length(ress) ?
                                    "residue $(resnumber(ress[j])) is not sequential with residue $(resnumber(ress[i])) (chain break)" :
-                                   "it has no " * (c1 == '-' ? "preceding" : "following") * " residue")))
+                                   # The reference runs off the chain end when a
+                                   # terminal residue carries its non-terminal name.
+                                   (c1 == '-' ?
+                                    "it has no preceding residue; an amino-terminal residue needs an \"N\"-prefixed name, and " :
+                                    "it has no following residue; a carboxyl-terminal residue needs a \"C\"-prefixed name, and ") *
+                                   specializeresnames_hint)))
         return templateatom(ress[j], aname), resatomidxs[j][aname]
     else
         return templateatom(ress[i], ref), resatomidxs[i][ref]
@@ -409,6 +423,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     ℓnca = ℓcac = θncac = zero(T)   # residue 1's frame, measured on the first iteration
     previdx = (0, 0, 0)
     for (i, res) in enumerate(ress)
+        haskey(residue_build_sequence, resname(res)) || throw(ArgumentError(unrecognized_residue_message(res)))
         empty!(atomidx)
         n, cα, c = backboneatom(res, "N"), backboneatom(res, "CA"), backboneatom(res, "C")
         idxn, idxcα, idxc = addatom(n), addatom(cα), addatom(c)
@@ -426,8 +441,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                                    bondangle(prevc, n, cα), false, ωs[i]))
             # C_i rotates about the N_i–Cα_i bond: φ_i. A ring through N–Cα
             # fixes φ (as in proline).
-            rot = get(residue_phi_rotatable, resname(res), nothing)
-            rot === nothing && throw(ArgumentError(unrecognized_residue_message(res)))
+            rot = residue_phi_rotatable[resname(res)]
             push!(steps, Extend{T}((previdx[3], idxn, idxcα), idxc, norm(coords(cα) - coords(c)),
                                    bondangle(n, cα, c), rot, ϕs[i]))
         end
@@ -448,8 +462,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         # CYX is disulfide-bonded cysteine and therefore has no thiol hydrogen.
         rname ∈ ("CYX", "NCYX", "CCYX") && "HG" in atomnames(res) &&
             throw(ArgumentError("$(resdesc(res)): CYX (disulfide-bonded cysteine) must not have a thiol HG"))
-        seq = get(residue_build_sequence, rname, nothing)
-        seq === nothing && throw(ArgumentError(unrecognized_residue_message(res)))
+        seq = residue_build_sequence[rname]
         atomidx = resatomidxs[i]
         for step in seq
             if isa(step, Tuple{String,String,String,String,Bool})

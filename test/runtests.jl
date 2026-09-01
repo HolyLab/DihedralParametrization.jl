@@ -836,14 +836,12 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws "rotatable dihedrals" atomcoordinates(bp, dihedrals[1:end-1], chain)
         @test_throws "rotatable dihedrals" atomcoordinates(bp, vcat(dihedrals, 0.0), chain)
 
-        # An un-renamed HIS trips the phi-rotatability lookup, which runs
-        # while the residue's own backbone is encoded.
+        # An un-renamed HIS is reported as an undisambiguated histidine.
         strucraw = read(path, MMCIFFormat)
         chainraw = only(only(strucraw))
         @test_throws ArgumentError bondparametrization(chainraw)
         @test_throws "histidine must be disambiguated as HID/HIE/HIP" bondparametrization(chainraw)
 
-        # Residue 1's name is first checked at its build-sequence lookup.
         struc1 = read(path, MMCIFFormat)
         specializeresnames!(struc1)
         chain1 = only(only(struc1))
@@ -851,6 +849,34 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         ress1[1].name = "HIS"
         @test_throws ArgumentError bondparametrization(chain1)
         @test_throws "residue 1 (HIS): unrecognized residue name" bondparametrization(chain1)
+        ress1[1].name = "NHIS"
+        @test_throws "residue 1 (NHIS): unrecognized residue name — histidine must be disambiguated" bondparametrization(chain1)
+
+        # A hetero residue is reported by name rather than by its missing backbone.
+        struchet = read(path, MMCIFFormat)
+        specializeresnames!(struchet)
+        chainhet = only(only(struchet))
+        water = Residue("HOH", 301, ' ', true, chainhet)
+        chainhet.residues[resid(water)] = water
+        push!(chainhet.res_list, resid(water))
+        @test_throws ArgumentError bondparametrization(chainhet)
+        @test_throws "residue H_301 (HOH): unrecognized residue name — nonstandard and hetero residues are not supported" bondparametrization(chainhet)
+
+        # A terminal residue without its "N"/"C" name prefix has a
+        # build-step reference that runs off the chain end.
+        strucnt = read(path, MMCIFFormat)
+        specializeresnames!(strucnt)
+        chainnt = only(only(strucnt))
+        ressnt = collectresidues(chainnt)
+        @test resname(ressnt[1]) == "NMET"
+        ressnt[1].name = "MET"
+        @test_throws ArgumentError bondparametrization(chainnt)
+        @test_throws "residue 1 (MET): cannot resolve build-step reference \"-C\" — it has no preceding residue; an amino-terminal residue needs an \"N\"-prefixed name" bondparametrization(chainnt)
+        @test_throws "BioStructures.specializeresnames! assigns these names" bondparametrization(chainnt)
+        ressnt[1].name = "NMET"
+        @test startswith(resname(ressnt[end]), "C")
+        ressnt[end].name = resname(ressnt[end])[2:end]
+        @test_throws "it has no following residue; a carboxyl-terminal residue needs a \"C\"-prefixed name" bondparametrization(chainnt)
 
         plan = jacobianplan(bp)
         X = atomcoordinates(bp, dihedrals, chain)
