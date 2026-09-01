@@ -4,6 +4,7 @@
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://HolyLab.github.io/DihedralParametrization.jl/dev/)
 [![Build Status](https://github.com/HolyLab/DihedralParametrization.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/HolyLab/DihedralParametrization.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/HolyLab/DihedralParametrization.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/HolyLab/DihedralParametrization.jl)
+[![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
 DihedralParametrization represents [protein structures](https://en.wikipedia.org/wiki/Protein_structure)
 using their rotatable-bond [dihedral angles](https://en.wikipedia.org/wiki/Dihedral_angle#In_stereochemistry).

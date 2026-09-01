@@ -1,4 +1,5 @@
 using DihedralParametrization
+using Aqua
 using BioStructures
 using StaticArrays
 using LinearAlgebra
@@ -14,6 +15,10 @@ if testad
 end
 
 @testset "DihedralParametrization.jl" begin
+    @testset "Code quality (Aqua.jl)" begin
+        Aqua.test_all(DihedralParametrization)
+    end
+
     @testset "Geometry" begin
         for _ = 1:5
             a, b, c, dgt = randn(SVector{3,Float64}), randn(SVector{3,Float64}), randn(SVector{3,Float64}), randn(SVector{3,Float64})
