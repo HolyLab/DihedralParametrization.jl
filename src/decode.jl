@@ -133,7 +133,7 @@ frameapprox(x, y, rtol, atol) = isapprox(x, y; rtol, atol)
 function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector,
                            n::SVector{3,Tref}, cα::SVector{3,Tref}, c::SVector{3,Tref};
                            rtol=nothing, atol=0) where {Tref<:Real}
-    Base.require_one_based_indexing(X)
+    Base.require_one_based_indexing(X, dihedrals)
     # Check that the inputs are consistent with `bp`
     nd = ndihedrals(bp)
     length(dihedrals) == nd ||
@@ -154,7 +154,7 @@ function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals
     R = promote_type(eltype(bp), eltype(dihedrals), Tref)
     X[1], X[2], X[3] = n, cα, c
     placed = 3                        # number of atoms placed so far
-    idx = firstindex(dihedrals) - 1   # index of the last dihedral consumed
+    idx = 0                           # index of the last dihedral consumed
     for step in bp.steps
         placed + 1 == step.aidx ||
             throw(ArgumentError("build step places atom $(step.aidx) but $placed atoms have been placed; bp.steps is out of order"))
@@ -189,6 +189,7 @@ contain exactly the atoms described by `bp`. Only default alternatives of
 disordered atoms and residues are overwritten.
 """
 function buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    Base.require_one_based_indexing(X)
     length(X) == length(bp.atoms) ||
         throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
     out = copy(reference)

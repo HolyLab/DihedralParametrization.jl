@@ -3,6 +3,7 @@ using Aqua
 using ExplicitImports
 using BioStructures
 using StaticArrays
+using OffsetArrays
 using LinearAlgebra
 using ForwardDiff
 using Random
@@ -32,6 +33,80 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         test_explicit_imports(DihedralParametrization;
                               all_explicit_imports_are_public   = VERSION >= v"1.11",
                               all_qualified_accesses_are_public = VERSION >= v"1.11")
+    end
+
+    @testset "Generic axes" begin
+        # Numerical arrays must be one-based; residue vectors need not be.
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        ress = collectresidues(chain)
+        bp, dihedrals = bondparametrization(chain)
+        plan = jacobianplan(bp)
+        n, cα, c = SVector{3}(ress[1]["N"].coords), SVector{3}(ress[1]["CA"].coords), SVector{3}(ress[1]["C"].coords)
+        X = atomcoordinates(bp, dihedrals, (n, cα, c))
+        rng = Random.Xoshiro(3)
+        w = [randn(rng, SVector{3,Float64}) for _ in X]
+        v = randn(rng, ndihedrals(plan))
+        na, nd = natoms(plan), ndihedrals(plan)
+        θ = dihedralangles(bp, X)
+        J, g, δx, S = coordinatejacobian(plan, X), vjp(plan, X, w), jvp(plan, X, v), weightedhessian(plan, X, w)
+        atomcoords(ch) = coords.(collectatoms(ch))
+        same(x, y) = isapprox(x, y; rtol=1e-12)
+
+        # Whole-array and noncontiguous views preserve one-based indexing.
+        whole(A) = view(A, ntuple(_ -> Colon(), ndims(A))...)
+        strided(A::AbstractVector) = view(repeat(A; inner=2), 1:2:2length(A))
+        strided(A::AbstractMatrix) = view(repeat(A; inner=(2, 2)), 1:2:2size(A, 1), 1:2:2size(A, 2))
+        @testset "$wrap" for wrap in (whole, strided)
+            @test same(dihedralangles(bp, wrap(X)), θ)
+            @test same(dihedralangles!(wrap(similar(θ)), bp, X), θ)
+            @test same(atomcoordinates(bp, wrap(dihedrals), (n, cα, c)), X)
+            @test same(atomcoordinates!(wrap(similar(X)), bp, dihedrals, (n, cα, c)), X)
+            @test same(atomcoords(buildchain(chain, bp, wrap(X))), atomcoords(buildchain(chain, bp, X)))
+            @test same(coordinatejacobian(plan, wrap(X)), J)
+            @test same(coordinatejacobian!(wrap(zeros(3na, nd)), plan, X), J)
+            @test same(vjp(plan, wrap(X), wrap(w)), g)
+            @test same(vjp!(wrap(zeros(nd)), plan, X, w), g)
+            @test same(jvp(plan, wrap(X), wrap(v)), δx)
+            @test same(jvp!(wrap(similar(X)), plan, X, v), δx)
+            @test same(weightedhessian(plan, wrap(X), wrap(w)), S)
+            @test same(weightedhessian!(wrap(zeros(nd, nd)), plan, X, w), S)
+            @test bondparametrization(wrap(ress)) == (bp, dihedrals)
+            @test same(dihedralangles(bp, wrap(ress)), dihedralangles(bp, ress))
+            @test same(atomcoordinates(bp, dihedrals, wrap(ress)), atomcoordinates(bp, dihedrals, ress))
+        end
+        # Matrix columns are accepted as coordinate vectors.
+        Xmat = reduce(hcat, X)
+        @test same(dihedralangles(bp, eachcol(Xmat)), θ)
+        @test same(coordinatejacobian(plan, eachcol(Xmat)), J)
+
+        # Offset numerical arrays are rejected.
+        off(A) = OffsetArray(A, ntuple(_ -> -2, ndims(A)))
+        msg = "offset arrays are not supported"
+        @test_throws msg dihedralangles(bp, off(X))
+        @test_throws msg dihedralangles!(off(similar(θ)), bp, X)
+        @test_throws msg atomcoordinates(bp, off(dihedrals), (n, cα, c))
+        @test_throws msg atomcoordinates!(off(similar(X)), bp, dihedrals, (n, cα, c))
+        @test_throws msg buildchain(chain, bp, off(X))
+        @test_throws msg coordinatejacobian(plan, off(X))
+        @test_throws msg coordinatejacobian!(off(zeros(3na, nd)), plan, X)
+        @test_throws msg vjp(plan, off(X), w)
+        @test_throws msg vjp(plan, X, off(w))
+        @test_throws msg vjp!(off(zeros(nd)), plan, X, w)
+        @test_throws msg jvp(plan, off(X), v)
+        @test_throws msg jvp(plan, X, off(v))
+        @test_throws msg jvp!(off(similar(X)), plan, X, v)
+        @test_throws msg weightedhessian(plan, off(X), w)
+        @test_throws msg weightedhessian(plan, X, off(w))
+        @test_throws msg weightedhessian!(off(zeros(nd, nd)), plan, X, w)
+
+        # Residues and reference-frame vectors are consumed in order.
+        @test bondparametrization(off(ress)) == (bp, dihedrals)
+        @test same(dihedralangles(bp, off(ress)), dihedralangles(bp, ress))
+        @test same(atomcoordinates(bp, dihedrals, off(ress)), X)
+        @test same(atomcoordinates(bp, dihedrals, (off(Vector(n)), off(Vector(cα)), off(Vector(c)))), X)
     end
 
     @testset "Geometry" begin

@@ -189,9 +189,10 @@ function unrecognized_residue_message(res::AbstractResidue)
                  "pass collectresidues(chain, standardselector) to exclude them"
 end
 
-# Convert residue views to the vector type used by BioStructures.
+# Copy residue views into BioStructures' vector type without restricting axes.
 residuevector(ress::Vector{<:AbstractResidue}) = ress
-residuevector(ress::AbstractVector{<:AbstractResidue}) = convert(Vector{AbstractResidue}, ress)
+residuevector(ress::AbstractVector{<:AbstractResidue}) =
+    copyto!(Vector{AbstractResidue}(undef, length(ress)), ress)
 
 """
     resatom, aidx = resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
@@ -273,13 +274,13 @@ Write [`dihedralangles`](@ref) into `dihedrals` and return it. The output must
 have `ndihedrals(bp)` entries.
 """
 function dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
-    Base.require_one_based_indexing(X)
+    Base.require_one_based_indexing(dihedrals, X)
     length(X) == length(bp.atoms) ||
         throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
     nd = ndihedrals(bp)
     length(dihedrals) == nd ||
         throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
-    k = firstindex(dihedrals) - 1
+    k = 0
     for step in bp.steps
         (step isa Extend && step.rotatable) || continue
         a, b, c = step.predecessors

@@ -197,6 +197,7 @@ In-place version of `coordinatejacobian`. `J` is overwritten and must have
 size `(3 * length(X), plan.ndih)`.
 """
 function coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}})
+    Base.require_one_based_indexing(J, X)
     _checklengths(plan, X, "X")
     size(J) == (3 * plan.natoms, plan.ndih) ||
         throw(DimensionMismatch("size(J) = $(size(J)) does not match plan's $((3 * plan.natoms, plan.ndih))"))
@@ -230,6 +231,7 @@ call.
 """
 function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
               workspace=nothing)
+    Base.require_one_based_indexing(g, X, w)
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     length(g) == plan.ndih || throw(DimensionMismatch("length(g) = $(length(g)) does not match plan's $(plan.ndih) dihedrals"))
@@ -287,6 +289,7 @@ call.
 """
 function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector;
               workspace=nothing)
+    Base.require_one_based_indexing(δx, X, v)
     _checklengths(plan, X, "X")
     length(δx) == plan.natoms || throw(DimensionMismatch("length(δx) = $(length(δx)) does not match plan's $(plan.natoms) atoms"))
     length(v) == plan.ndih || throw(DimensionMismatch("length(v) = $(length(v)) does not match plan's $(plan.ndih) dihedrals"))
@@ -343,6 +346,7 @@ call.
 """
 function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
                           workspace=nothing)
+    Base.require_one_based_indexing(S, X, w)
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     size(S) == (plan.ndih, plan.ndih) ||

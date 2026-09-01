@@ -114,6 +114,9 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   corresponding flat vector of length `3*natoms`, and
   `reinterpret(reshape, T, X)` is the same data as a `3 × natoms` matrix.
   Other 3-vector types are converted to `SVector{3,T}` on entry.
+  Coordinate, weight, dihedral, and Jacobian arrays must use one-based
+  indexing. Views and other one-based `AbstractArray`s are accepted; offset
+  arrays throw an `ArgumentError`.
 
   A per-atom cotangent `w::Vector{SVector{3,T}}` flattens the same way, so
 
