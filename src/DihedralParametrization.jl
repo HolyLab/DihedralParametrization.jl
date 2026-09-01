@@ -7,7 +7,8 @@ using LinearAlgebra: cross, dot, norm
 using StaticArrays: SMatrix, SVector
 
 export atomcoordinates, bondparametrization, buildchain
-export jacobianplan, coordinatejacobian, coordinatejacobian!, jtv!, jvp!, vhp!, vhp
+export jacobianplan, coordinatejacobian, coordinatejacobian!, vjp, vjp!, jvp, jvp!
+export weightedhessian, weightedhessian!
 
 include("tables.jl")
 include("encode.jl")

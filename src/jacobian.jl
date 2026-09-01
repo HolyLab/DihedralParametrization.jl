@@ -15,11 +15,11 @@ produced from the same `BondParametrization`.
 - `natoms::Int`: the number of atoms in `X` (equal to `length(bp.atoms)`).
 - `ndih::Int`: the number of rotatable dihedrals (equal to `ndihedrals(bp)`),
   i.e. the number of Jacobian columns and the required length of `dihedrals`,
-  of `v` in `jvp!`, and of `g` in `jtv!`.
+  of `v` in `jvp!`, and of `g` in `vjp!`.
 
 The remaining fields (`deepest`, `parent`, `bidx`, `cidx`) encode the
-build-order tree that `coordinatejacobian!`, `jtv!`, `jvp!`, and `vhp!` use
-internally and are not intended for direct use.
+build-order tree that `coordinatejacobian!`, `vjp!`, `jvp!`, and
+`weightedhessian!` use internally and are not intended for direct use.
 """
 struct JacobianPlan
     natoms::Int
@@ -162,6 +162,10 @@ end
 Compute ∂X/∂θ as a dense `3 * length(X) × plan.ndih` matrix. The rows for
 atom `t` are `3(t-1)+1:3t`. `X` must have been produced from the same bond
 parametrization as `plan`.
+
+A coordinate list `Y::Vector{SVector{3,T}}` corresponds to the flat vector
+`reinterpret(T, Y)`, so `J * v` matches `reinterpret(T, jvp(plan, X, v))`
+and `J' * reinterpret(T, w)` matches `vjp(plan, X, w)`.
 """
 function coordinatejacobian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}})
     T = eltype(eltype(X))
@@ -195,12 +199,12 @@ function coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractV
 end
 
 """
-    g = jtv!(g, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    g = vjp!(g, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
 
 Compute `g = J' * w` without forming `J`, where `J = ∂X/∂θ`. `w[t]` is the
 weight for atom `t`. Returns `g`.
 """
-function jtv!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     length(g) == plan.ndih || throw(DimensionMismatch("length(g) = $(length(g)) does not match plan's $(plan.ndih) dihedrals"))
@@ -226,6 +230,17 @@ function jtv!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector
         g[k] = dot(u, S1[k] - cross(p, S0[k]))
     end
     return g
+end
+
+"""
+    g = vjp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+
+Allocating version of `vjp!`.
+"""
+function vjp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
+    g = Vector{T}(undef, plan.ndih)
+    return vjp!(g, plan, X, w)
 end
 
 """
@@ -257,17 +272,30 @@ function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVect
 end
 
 """
-    S = vhp!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    δx = jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
 
-Compute `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the contraction of the
-coordinate map's second derivative with a per-atom cotangent `w`, without
-forming the second-derivative tensor. `X` and `w` each have one `SVector{3}`
-entry per atom, `w[t]` playing the same role as in `jtv!`; both the second
-derivative and `S` are evaluated at the fixed configuration `X`. `S` is
-symmetric and is overwritten; it must have size `(plan.ndih, plan.ndih)`.
-Returns `S`.
+Allocating version of `jvp!`.
 """
-function vhp!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
+    T = promote_type(eltype(eltype(X)), eltype(v))
+    δx = Vector{SVector{3,T}}(undef, plan.natoms)
+    return jvp!(δx, plan, X, v)
+end
+
+"""
+    S = weightedhessian!(S, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+
+Compute `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the Hessian with respect to
+the dihedrals θ of the scalar `Σ_a w[a] ⋅ X[a](θ)`, evaluated at the
+configuration `X`. This is not a Hessian-vector product: `S` is the full
+`ndih × ndih` Hessian of `w ⋅ X`, computed without forming the coordinate
+map's second-derivative tensor.
+
+`X` and `w` each have one `SVector{3}` entry per atom, `w[t]` playing the
+same role as in `vjp!`. `S` is symmetric and is overwritten; it must have
+size `(plan.ndih, plan.ndih)`. Returns `S`.
+"""
+function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     size(S) == (plan.ndih, plan.ndih) ||
@@ -313,12 +341,12 @@ function vhp!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector
 end
 
 """
-    S = vhp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+    S = weightedhessian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
 
-Allocating version of `vhp!`.
+Allocating version of `weightedhessian!`.
 """
-function vhp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
+function weightedhessian(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}})
     T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
     S = zeros(T, plan.ndih, plan.ndih)
-    return vhp!(S, plan, X, w)
+    return weightedhessian!(S, plan, X, w)
 end

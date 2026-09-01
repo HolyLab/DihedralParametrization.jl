@@ -24,14 +24,14 @@ as nested rigid rotations.
 
 - [`coordinatejacobian`](@ref) / [`coordinatejacobian!`](@ref) build the
   dense `3*natoms × ndih` matrix `J = ∂X/∂θ`, evaluated at a specific `X`.
-- [`jvp!`](@ref) computes `δx = J * v` (a Jacobian-vector product) without
-  forming `J`.
-- [`jtv!`](@ref) computes `g = J' * w` (a vector-Jacobian product) without
-  forming `J`.
-- [`vhp!`](@ref) / [`vhp`](@ref) compute
-  `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the contraction of the coordinate
-  map's second derivative with a per-atom cotangent `w`, without forming the
-  second-derivative tensor.
+- [`jvp`](@ref) / [`jvp!`](@ref) compute `δx = J * v` (a Jacobian-vector
+  product) without forming `J`.
+- [`vjp`](@ref) / [`vjp!`](@ref) compute `g = J' * w` (a vector-Jacobian
+  product) without forming `J`.
+- [`weightedhessian`](@ref) / [`weightedhessian!`](@ref) compute
+  `S[i,j] = Σ_a w[a] ⋅ ∂²X[a]/∂θ_i∂θ_j`, the Hessian with respect to θ of
+  the scalar `Σ_a w[a] ⋅ X[a](θ)`, evaluated at `X`. It is the full
+  `ndih × ndih` Hessian of `w ⋅ X`, not a Hessian-vector product.
 
 These functions take a `JacobianPlan` and coordinates `X`; call
 `atomcoordinates` first. The vector products also take a per-atom vector `w`
@@ -39,7 +39,7 @@ or per-dihedral vector `v`.
 
 ## Worked example: gradient of a coordinate objective
 
-This uses `jtv!` to differentiate a squared-distance objective:
+This uses `vjp!` to differentiate a squared-distance objective:
 
 ```julia
 using DihedralParametrization, BioStructures
@@ -56,7 +56,7 @@ function objective_and_grad(bp, plan, θ, n, cα, c, target)
     X = atomcoordinates(bp, θ, n, cα, c)
     w = X .- target                     # gradient of (1/2) Σ |X - target|² w.r.t. X
     val = 0.5 * sum(v -> sum(abs2, v), w)
-    g = jtv!(zeros(plan.ndih), plan, X, w)
+    g = vjp!(zeros(plan.ndih), plan, X, w)
     return val, g
 end
 
@@ -94,6 +94,26 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
 - **Units.** All angles are in radians: the dihedrals passed to
   `atomcoordinates`, the fixed values stored in `bp`, and the `θbcd`/`ϕbc`
   arguments of `snnerf`.
+
+- **Coordinate layout.** `atomcoordinates`, `jvp!`, `vjp!`, and
+  `weightedhessian!` represent a configuration as a
+  `Vector{SVector{3,T}}` with one entry per atom, while
+  `coordinatejacobian` returns a dense `3*natoms × ndih` matrix whose rows
+  `3(t-1)+1:3t` belong to atom `t`. The two representations share memory
+  layout: for `X::Vector{SVector{3,T}}`, `reinterpret(T, X)` is the
+  corresponding flat vector of length `3*natoms`, and
+  `reinterpret(reshape, T, X)` is the same data as a `3 × natoms` matrix.
+
+  A per-atom cotangent `w::Vector{SVector{3,T}}` flattens the same way, so
+
+  ```julia
+  J = coordinatejacobian(plan, X)
+  J' * reinterpret(T, w) ≈ vjp(plan, X, w)
+  J * v                  ≈ reinterpret(T, jvp(plan, X, v))
+  ```
+
+  `J` is an ordinary matrix, so `J' * J`, `J \ r`, and factorizations work
+  directly.
 
 - **Layout and ordering of `dihedrals`.** For a chain of `nres` residues,
   `dihedrals` (of length `ndihedrals(bp)`) is built in two passes:

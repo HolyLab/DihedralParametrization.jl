@@ -289,12 +289,33 @@ end
         # Compare products with the explicit Jacobian.
         for _ = 1:3
             w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
-            g = jtv!(zeros(plan.ndih), plan, Xpert, w)
+            g = vjp!(zeros(plan.ndih), plan, Xpert, w)
             @test isapprox(g, Jpert' * flatten(w); rtol=1e-12)
 
             v = randn(rng, plan.ndih)
             δx = jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms], plan, Xpert, v)
             @test isapprox(flatten(δx), Jpert * v; rtol=1e-12)
+
+            # The allocating forms agree with the in-place ones.
+            @test vjp(plan, Xpert, w) == g
+            @test jvp(plan, Xpert, v) == δx
+
+            # `reinterpret` relates the coordinate list to the rows of `J`.
+            @test isapprox(Jpert' * reinterpret(Float64, w), vjp(plan, Xpert, w); rtol=1e-12)
+            @test isapprox(reinterpret(Float64, jvp(plan, Xpert, v)), Jpert * v; rtol=1e-12)
+        end
+
+        # Element types of the allocating forms follow promotion.
+        let X32 = [SVector{3,Float32}(x) for x in Xpert],
+            w32 = [randn(rng, SVector{3,Float32}) for _ = 1:plan.natoms],
+            v32 = randn(rng, Float32, plan.ndih),
+            w64 = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms],
+            v64 = randn(rng, plan.ndih)
+
+            @test eltype(vjp(plan, X32, w32)) === Float32
+            @test eltype(vjp(plan, X32, w64)) === Float64
+            @test eltype(eltype(jvp(plan, X32, v32))) === Float32
+            @test eltype(eltype(jvp(plan, X32, v64))) === Float64
         end
 
         # The first three atoms (N, Cα, C of residue 1) never move.
@@ -347,7 +368,7 @@ end
         @test plancyx.ndih == length(dihedralscyx)
     end
 
-    @testset "Analytic Hessian-vector contraction" begin
+    @testset "Analytic weighted Hessian" begin
         flatten(X) = reduce(vcat, Vector.(X))
 
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
@@ -366,7 +387,7 @@ end
 
         # Native configuration.
         X = atomcoordinates(bp, dihedrals, n, cα, c)
-        S = vhp(plan, X, w)
+        S = weightedhessian(plan, X, w)
         @test issymmetric(S)
         Had = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), dihedrals)
         devnative = maximum(abs, S .- Had)
@@ -375,33 +396,33 @@ end
         # Perturbed configuration.
         θpert = dihedrals .+ 0.3 .* randn(rng, length(dihedrals))
         Xpert = atomcoordinates(bp, θpert, n, cα, c)
-        Spert = vhp(plan, Xpert, w)
+        Spert = weightedhessian(plan, Xpert, w)
         @test issymmetric(Spert)
         Hadpert = ForwardDiff.hessian(θ -> objective(bp, n, cα, c, w, θ), θpert)
         devpert = maximum(abs, Spert .- Hadpert)
         @test isapprox(Spert, Hadpert; rtol=1e-10)
 
-        # vhp! in-place matches vhp.
+        # weightedhessian! in-place matches weightedhessian.
         Sfilled = zeros(plan.ndih, plan.ndih)
-        vhp!(Sfilled, plan, Xpert, w)
+        weightedhessian!(Sfilled, plan, Xpert, w)
         @test Sfilled == Spert
 
         # A second, independently seeded random w.
         rng2 = Random.Xoshiro(97)
         w2 = [randn(rng2, SVector{3,Float64}) for _ = 1:plan.natoms]
         w2f = flatten(w2)
-        S2 = vhp(plan, Xpert, w2)
+        S2 = weightedhessian(plan, Xpert, w2)
         @test issymmetric(S2)
         Had2 = ForwardDiff.hessian(θ -> dot(w2f, flatten(atomcoordinates(bp, collect(θ), n, cα, c))), θpert)
         @test isapprox(S2, Had2; rtol=1e-10)
 
         # Dimension mismatches.
         Ssmall = zeros(plan.ndih - 1, plan.ndih - 1)
-        @test_throws DimensionMismatch vhp!(Ssmall, plan, Xpert, w)
+        @test_throws DimensionMismatch weightedhessian!(Ssmall, plan, Xpert, w)
         Xshort = Xpert[1:end-1]
-        @test_throws DimensionMismatch vhp!(Sfilled, plan, Xshort, w)
+        @test_throws DimensionMismatch weightedhessian!(Sfilled, plan, Xshort, w)
         wshort = w[1:end-1]
-        @test_throws DimensionMismatch vhp!(Sfilled, plan, Xpert, wshort)
+        @test_throws DimensionMismatch weightedhessian!(Sfilled, plan, Xpert, wshort)
 
         # Exercise a disulfide.
         pathcyx = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens_CYX.cif")
@@ -417,7 +438,7 @@ end
         Xcyx = atomcoordinates(bpcyx, dihedralscyx, ncyx, cαcyx, ccyx)
         wcyx = [randn(rng, SVector{3,Float64}) for _ = 1:plancyx.natoms]
         wcyxf = flatten(wcyx)
-        Scyx = vhp(plancyx, Xcyx, wcyx)
+        Scyx = weightedhessian(plancyx, Xcyx, wcyx)
         @test issymmetric(Scyx)
         Hadcyx = ForwardDiff.hessian(θ -> dot(wcyxf, flatten(atomcoordinates(bpcyx, collect(θ), ncyx, cαcyx, ccyx))), dihedralscyx)
         @test isapprox(Scyx, Hadcyx; rtol=1e-10)
@@ -452,9 +473,9 @@ end
         w = [zero(SVector{3,Float64}) for _ = 1:plan.natoms]
         v = zeros(plan.ndih)
 
-        @test_throws DimensionMismatch jtv!(zeros(plan.ndih - 1), plan, X, w)
-        @test_throws DimensionMismatch jtv!(zeros(plan.ndih), plan, X, w[1:end-1])
-        @test_throws DimensionMismatch jtv!(zeros(plan.ndih), plan, X[1:end-1], w)
+        @test_throws DimensionMismatch vjp!(zeros(plan.ndih - 1), plan, X, w)
+        @test_throws DimensionMismatch vjp!(zeros(plan.ndih), plan, X, w[1:end-1])
+        @test_throws DimensionMismatch vjp!(zeros(plan.ndih), plan, X[1:end-1], w)
 
         @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms-1], plan, X, v)
         @test_throws DimensionMismatch jvp!([zero(SVector{3,Float64}) for _ = 1:plan.natoms], plan, X, v[1:end-1])
