@@ -1,12 +1,13 @@
 module DihedralParametrization
 
-using BioStructures: Atom, Chain, Residue, atomname, bondangle, chain, collectatoms,
-                     collectresidues, dihedralangle, inscode, omegaangles, phiangles,
-                     psiangles, resid, residue, resname, resnumber, sequentialresidues
+using BioStructures: AbstractAtom, AbstractResidue, Chain, atomname, atomnames, bondangle,
+                     collectatoms, collectresidues, coords, coords!, dihedralangle, inscode,
+                     omegaangles, phiangles, psiangles, resid, residue, resname, resnumber,
+                     sequentialresidues
 using LinearAlgebra: cross, dot, norm
 using StaticArrays: SMatrix, SVector
 
-export BondParametrization, JacobianPlan
+export BondParametrization, JacobianPlan, JacobianWorkspace
 export atomcoordinates, atomcoordinates!, bondparametrization, buildchain, dihedralangles, dihedralangles!,
        dihedrallabels, natoms, ndihedrals
 export jacobianplan, coordinatejacobian, coordinatejacobian!, vjp, vjp!, jvp, jvp!

@@ -25,7 +25,7 @@ geometry or the derivative layer, see
 ## Installation
 
 ```julia
-pkg> add DihedralParametrization
+pkg> add https://github.com/HolyLab/DihedralParametrization.jl
 ```
 
 ## Prerequisites
@@ -41,6 +41,12 @@ satisfy these constraints:
   carboxyl-terminal residues have "N" and "C" prepended to their residue
   names, respectively. BioStructures's `specializeresnames!(chain)` assigns
   these names once hydrogens have been added.
+- The carboxyl-terminal residue carries its `OXT` atom.
+- The chain has no breaks.
+- Only polymer residues are included. To exclude waters, ions, and ligands,
+  pass `collectresidues(chain, standardselector)`. `buildchain` preserves
+  excluded residues.
+- Atoms and residues with alternatives contribute their defaults.
 
 `bondparametrization` throws an `ArgumentError`, naming the residue at fault,
 for input that does not meet these constraints or that the build tables

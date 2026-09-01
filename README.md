@@ -25,7 +25,7 @@ julia> using DihedralParametrization, BioStructures
 
 julia> struc = read("some_structure_with_hydrogens.cif", MMCIFFormat);
 
-julia> specializeresnames!(struc);   # see the documentation's "Pre-requisites" section
+julia> specializeresnames!(struc);   # see the documentation's "Prerequisites" section
 
 julia> bp, dihedrals = bondparametrization(struc["A"]);
 

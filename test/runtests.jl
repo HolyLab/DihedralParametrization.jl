@@ -8,12 +8,9 @@ using ForwardDiff
 using Random
 using Test
 
-const testad = Base.VERSION.major == 1 && Base.VERSION.minor == 10
-if testad
-    using DifferentiationInterface
-    using Mooncake: Mooncake
-    using FiniteDifferences: central_fdm
-end
+using DifferentiationInterface
+using Mooncake: Mooncake
+using FiniteDifferences: central_fdm
 
 # Residue `resnum`'s own φ is the dihedral of the `Extend` step that places its C.
 function rotatablephi(bp, resnum)
@@ -46,7 +43,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             drc = DihedralParametrization.snnerf(a, b, c, ℓ, θ, ϕ)
             @test isapprox(drc, dgt; atol=1e-8)
             βs = DihedralParametrization.betas(a, b, c, [dgt])
-            drc = only(DihedralParametrization.add_to_middle(a, b, c, βs))
+            drc = only(DihedralParametrization.add_to_middle!([zero(a)], 1, a, b, c, βs))
             @test isapprox(drc, dgt; atol=1e-8)
         end
     end
@@ -187,6 +184,45 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws DimensionMismatch atomcoordinates(bp, dihedrals[1:end-1])
     end
 
+    @testset "Reference-frame tolerance" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+
+        # A rigidly transformed frame passes at the default tolerance.
+        rng = Random.Xoshiro(3)
+        Q, _ = qr(randn(rng, 3, 3))
+        R = Matrix(Q)
+        det(R) < 0 && (R[:, 1] .*= -1)
+        t = SVector(1.0, -2.0, 0.5)
+        rot(x) = SVector{3}(R * x + t)
+        frame = map(rot, (X[1], X[2], X[3]))
+        Xrot = atomcoordinates(bp, dihedrals, frame)
+        @test all(isapprox(Xrot[k], rot(X[k]); atol=1e-8) for k in eachindex(X))
+
+        # A frame rounded to three decimals needs a matching tolerance.
+        rounded = map(x -> round.(x; digits=3), frame)
+        @test_throws ArgumentError atomcoordinates(bp, dihedrals, rounded)
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, rounded)
+        @test_throws "reference N–Cα distance" atomcoordinates!(similar(X), bp, dihedrals, rounded)
+        Xr = atomcoordinates(bp, dihedrals, rounded; atol=1e-3)
+        @test maximum(norm(Xr[k] - rot(X[k])) for k in eachindex(X)) < 5e-2
+        @test atomcoordinates!(similar(X), bp, dihedrals, rounded; atol=1e-3) == Xr
+        @test atomcoordinates(bp, dihedrals, rounded; rtol=1e-3) == Xr
+        @test @inferred(atomcoordinates(bp, dihedrals, rounded; atol=1e-3)) == Xr
+        @test @inferred(atomcoordinates!(similar(X), bp, dihedrals, rounded; rtol=1e-3, atol=1e-3)) == Xr
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, rounded; atol=1e-6)
+        @test_throws "reference N–Cα distance" atomcoordinates(bp, dihedrals, rounded; rtol=1e-6)
+
+        # The keywords reach the `Chain` and atom-tuple forms.
+        @test atomcoordinates(bp, dihedrals, chain; atol=1e-3) == X
+        r1 = chain[1]
+        @test atomcoordinates(bp, dihedrals, (r1["N"], r1["CA"], r1["C"]); rtol=1e-3) == X
+    end
+
     @testset "dihedralangles" begin
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)
@@ -240,7 +276,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         specializeresnames!(strucmoved)
         chainmoved = only(only(strucmoved))
         collectresidues(chainmoved)[5].number = 10005
-        @test_throws "chain has no atom N in residue 5" dihedralangles(bp, chainmoved)
+        @test_throws "no atom N in residue 5, which the parametrization requires" dihedralangles(bp, chainmoved)
     end
 
     @testset "dihedrallabels" begin
@@ -401,6 +437,116 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test all(k -> isapprox(wrap(dihedralspert[k] - θpert[k]), 0; atol=1e-8), eachindex(dihedrals))
     end
 
+    @testset "Alternate locations and disordered residues" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        function loadchain()
+            struc = read(path, MMCIFFormat)
+            specializeresnames!(struc)
+            return only(only(struc))
+        end
+        chain = loadchain()
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+        ipos = 8
+
+        # Every entry point agrees with the undisordered chain, and
+        # `buildchain` keeps the disordered structure.
+        function checkdisordered(chaind)
+            bpd, dihedralsd = bondparametrization(chaind)
+            @test bpd == bp
+            @test dihedralsd == dihedrals
+            @test dihedralangles(bp, chaind) == dihedrals
+            @test atomcoordinates(bp, dihedrals, chaind) == X
+            return buildchain(chaind, bp, X)
+        end
+
+        # A `DisorderedAtom` resolves to its default alternate location.
+        chainalt = loadchain()
+        r = collectresidues(chainalt)[ipos]
+        a = r["CA"]
+        altA = BioStructures.Atom(a.serial, a.name, 'A', copy(a.coords), 0.6, a.temp_factor, a.element, a.charge, r)
+        altB = BioStructures.Atom(a.serial, a.name, 'B', a.coords .+ 0.3, 0.4, a.temp_factor, a.element, a.charge, r)
+        r["CA"] = DisorderedAtom(Dict('A' => altA, 'B' => altB), 'A')
+        @test isdisorderedatom(r["CA"])
+        rebuilt = checkdisordered(chainalt)
+        ca = collectresidues(rebuilt)[ipos]["CA"]
+        @test isdisorderedatom(ca)
+        @test isapprox(coords(ca), coords(a); atol=1e-8)
+        @test coords(ca['B']) == coords(altB)   # the non-default location is untouched
+
+        # A `DisorderedResidue` resolves to its default residue.
+        chaindis = loadchain()
+        r = collectresidues(chaindis)[ipos]
+        ralt = BioStructures.Residue(r, chaindis)
+        ralt.name = "XYZ"
+        chaindis.residues[resid(r)] = DisorderedResidue(Dict(resname(r) => r, "XYZ" => ralt), resname(r))
+        @test isdisorderedres(chaindis[resnumber(r)])
+        rebuilt = checkdisordered(chaindis)
+        rd = collectresidues(rebuilt)[ipos]
+        @test isdisorderedres(rd)
+        @test resname(rd) == resname(r)
+        @test all(isapprox(coords(rd[name]), coords(r[name]); atol=1e-8) for name in atomnames(r))
+    end
+
+    @testset "Residue vectors and hetero residues" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        function loadchain()
+            struc = read(path, MMCIFFormat)
+            specializeresnames!(struc)
+            return only(only(struc))
+        end
+        chain = loadchain()
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+
+        # The residue-vector forms agree with the `Chain` forms.
+        ress = collectresidues(chain)
+        @test bondparametrization(ress) == (bp, dihedrals)
+        @test bondparametrization(Float32, ress) == bondparametrization(Float32, chain)
+        @test dihedralangles(bp, ress) == dihedrals
+        @test atomcoordinates(bp, dihedrals, ress) == X
+        @test atomcoordinates!(similar(X), bp, dihedrals, ress; atol=1e-3) == X
+        @test atomcoordinates(bp, dihedrals, view(ress, :)) == X
+        @test dihedralangles(bp, view(ress, :)) == dihedrals
+        @test bondparametrization(view(ress, :)) == (bp, dihedrals)
+        @test bondparametrization(Residue[r for r in ress]) == (bp, dihedrals)
+
+        # Select standard residues from a chain containing water.
+        chainwet = loadchain()
+        water = Residue("HOH", 301, ' ', true, chainwet)
+        water.atoms["O"] = BioStructures.Atom(9999, "O", ' ', [1.0, 2.0, 3.0], 1.0, 0.0, "O", "", water)
+        push!(water.atom_list, "O")
+        chainwet.residues[resid(water)] = water
+        push!(chainwet.res_list, resid(water))
+        @test_throws "residue H_301 (HOH): unrecognized residue name" bondparametrization(chainwet)
+        @test_throws "pass collectresidues(chain, standardselector) to exclude them" bondparametrization(chainwet)
+        @test_throws "the residues have $(length(X) + 1) atoms but the parametrization describes $(length(X))" dihedralangles(bp, chainwet)
+        standard = collectresidues(chainwet, standardselector)
+        @test length(standard) == length(ress)
+        @test bondparametrization(standard) == (bp, dihedrals)
+        @test dihedralangles(bp, standard) == dihedrals
+        @test atomcoordinates(bp, dihedrals, standard) == X
+        @test atomcoordinates(bp, dihedrals, chainwet) == X   # the frame only needs residue 1
+
+        # `buildchain` overwrites the described residues and copies the water.
+        rng = Random.Xoshiro(5)
+        θ = dihedrals .+ 0.2 .* randn(rng, length(dihedrals))
+        Xθ = atomcoordinates(bp, θ, standard)
+        out = buildchain(chainwet, bp, Xθ)
+        @test length(collectresidues(out)) == length(ress) + 1
+        @test coords(out["H_301"]["O"]) == [1.0, 2.0, 3.0]
+        θback = dihedralangles(bp, collectresidues(out, standardselector))
+        @test all(x -> isapprox(x, 0; atol=1e-10), rem2pi.(θback .- θ, RoundNearest))
+        @test all(isapprox(coords(out[a.resnum][String(a.aname)]), Xθ[i]; atol=1e-8) for (i, a) in pairs(bp.atoms))
+
+        # The water is not counted toward the described residues' atoms.
+        let r = collectresidues(chainwet)[5]
+            delete!(r.atoms, "HB2")
+            deleteat!(r.atom_list, findfirst(==("HB2"), r.atom_list))
+            @test_throws "reference has $(length(X) - 1) atoms in the residues the parametrization describes, but it describes $(length(X))" buildchain(chainwet, bp, X)
+        end
+    end
+
     @testset "2QMT (experimental structure)" begin
         # Provenance: test/data/README.md.
         path = joinpath(@__DIR__, "data", "2qmt_H.cif")
@@ -457,6 +603,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         # Missing template atoms report residue context.
         cysfree.name = "CYS"
         delete!(cysfree.atoms, "HG")
+        deleteat!(cysfree.atom_list, findfirst(==("HG"), cysfree.atom_list))
         @test_throws ArgumentError bondparametrization(chainfree)
         @test_throws "cannot find atom \"HG\"" bondparametrization(chainfree)
     end
@@ -699,6 +846,46 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         bpcyx, dihedralscyx = bondparametrization(chaincyx)
         plancyx = jacobianplan(bpcyx)
         @test plancyx.ndih == length(dihedralscyx)
+
+        # A preallocated workspace makes the in-place products allocation-free.
+        ws = JacobianWorkspace(plan)
+        @test ws isa JacobianWorkspace{Float64}
+        @test eltype(ws) === Float64
+        @test JacobianWorkspace{Float32}(plan) isa JacobianWorkspace{Float32}
+        @test JacobianWorkspace(plan, Float32) isa JacobianWorkspace{Float32}
+        @test sprint(show, ws) == "JacobianWorkspace{Float64} for $(ndihedrals(plan)) dihedrals"
+        w = [randn(rng, SVector{3,Float64}) for _ = 1:plan.natoms]
+        v = randn(rng, plan.ndih)
+        g = zeros(plan.ndih)
+        δx = [zero(SVector{3,Float64}) for _ = 1:plan.natoms]
+        S = zeros(plan.ndih, plan.ndih)
+        @test vjp!(g, plan, Xpert, w; workspace=ws) == vjp(plan, Xpert, w)
+        @test jvp!(δx, plan, Xpert, v; workspace=ws) == jvp(plan, Xpert, v)
+        @test weightedhessian!(S, plan, Xpert, w; workspace=ws) == weightedhessian(plan, Xpert, w)
+        # Measured inside functions: variables of this block are boxed.
+        allocvjp!(g, plan, X, w, ws) = @allocated vjp!(g, plan, X, w; workspace=ws)
+        allocjvp!(δx, plan, X, v, ws) = @allocated jvp!(δx, plan, X, v; workspace=ws)
+        allocwh!(S, plan, X, w, ws) = @allocated weightedhessian!(S, plan, X, w; workspace=ws)
+        @test allocvjp!(g, plan, Xpert, w, ws) == 0
+        @test allocjvp!(δx, plan, Xpert, v, ws) == 0
+        @test allocwh!(S, plan, Xpert, w, ws) == 0
+        # Workspaces can be reused across products.
+        @test vjp!(g, plan, Xpert, w; workspace=ws) == vjp(plan, Xpert, w)
+        # Non-SVector inputs still accept the workspace.
+        @test vjp!(g, plan, MVector{3}.(Xpert), w; workspace=ws) == vjp(plan, Xpert, w)
+
+        # A workspace of the wrong element type or built for another plan is rejected.
+        ws32 = JacobianWorkspace(plan, Float32)
+        @test_throws ArgumentError vjp!(g, plan, Xpert, w; workspace=ws32)
+        @test_throws "workspace has element type Float32 but the inputs promote to Float64" vjp!(g, plan, Xpert, w; workspace=ws32)
+        @test_throws ArgumentError jvp!(δx, plan, Xpert, v; workspace=ws32)
+        @test_throws ArgumentError weightedhessian!(S, plan, Xpert, w; workspace=ws32)
+        @test ndihedrals(plancyx) != ndihedrals(plan)
+        wscyx = JacobianWorkspace(plancyx)
+        @test_throws DimensionMismatch vjp!(g, plan, Xpert, w; workspace=wscyx)
+        @test_throws "workspace holds $(ndihedrals(plancyx)) dihedrals but plan has $(ndihedrals(plan))" vjp!(g, plan, Xpert, w; workspace=wscyx)
+        @test_throws DimensionMismatch jvp!(δx, plan, Xpert, v; workspace=wscyx)
+        @test_throws DimensionMismatch weightedhessian!(S, plan, Xpert, w; workspace=wscyx)
     end
 
     @testset "Analytic weighted Hessian" begin
@@ -787,14 +974,12 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws "rotatable dihedrals" atomcoordinates(bp, dihedrals[1:end-1], chain)
         @test_throws "rotatable dihedrals" atomcoordinates(bp, vcat(dihedrals, 0.0), chain)
 
-        # An un-renamed HIS trips the phi-rotatability lookup, which runs
-        # while the residue's own backbone is encoded.
+        # An un-renamed HIS is reported as an undisambiguated histidine.
         strucraw = read(path, MMCIFFormat)
         chainraw = only(only(strucraw))
         @test_throws ArgumentError bondparametrization(chainraw)
         @test_throws "histidine must be disambiguated as HID/HIE/HIP" bondparametrization(chainraw)
 
-        # Residue 1's name is first checked at its build-sequence lookup.
         struc1 = read(path, MMCIFFormat)
         specializeresnames!(struc1)
         chain1 = only(only(struc1))
@@ -802,6 +987,34 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         ress1[1].name = "HIS"
         @test_throws ArgumentError bondparametrization(chain1)
         @test_throws "residue 1 (HIS): unrecognized residue name" bondparametrization(chain1)
+        ress1[1].name = "NHIS"
+        @test_throws "residue 1 (NHIS): unrecognized residue name — histidine must be disambiguated" bondparametrization(chain1)
+
+        # A hetero residue is reported by name rather than by its missing backbone.
+        struchet = read(path, MMCIFFormat)
+        specializeresnames!(struchet)
+        chainhet = only(only(struchet))
+        water = Residue("HOH", 301, ' ', true, chainhet)
+        chainhet.residues[resid(water)] = water
+        push!(chainhet.res_list, resid(water))
+        @test_throws ArgumentError bondparametrization(chainhet)
+        @test_throws "residue H_301 (HOH): unrecognized residue name — nonstandard and hetero residues are not supported" bondparametrization(chainhet)
+
+        # A terminal residue without its "N"/"C" name prefix has a
+        # build-step reference that runs off the chain end.
+        strucnt = read(path, MMCIFFormat)
+        specializeresnames!(strucnt)
+        chainnt = only(only(strucnt))
+        ressnt = collectresidues(chainnt)
+        @test resname(ressnt[1]) == "NMET"
+        ressnt[1].name = "MET"
+        @test_throws ArgumentError bondparametrization(chainnt)
+        @test_throws "residue 1 (MET): cannot resolve build-step reference \"-C\" — it has no preceding residue; an amino-terminal residue needs an \"N\"-prefixed name" bondparametrization(chainnt)
+        @test_throws "BioStructures.specializeresnames! assigns these names" bondparametrization(chainnt)
+        ressnt[1].name = "NMET"
+        @test startswith(resname(ressnt[end]), "C")
+        ressnt[end].name = resname(ressnt[end])[2:end]
+        @test_throws "it has no following residue; a carboxyl-terminal residue needs a \"C\"-prefixed name" bondparametrization(chainnt)
 
         plan = jacobianplan(bp)
         X = atomcoordinates(bp, dihedrals, chain)
@@ -829,7 +1042,9 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         X = atomcoordinates(bp, dihedrals, chain)
 
         @test_throws ArgumentError bondparametrization(Chain("Z"))
-        @test_throws "chain has no residues" bondparametrization(Chain("Z"))
+        @test_throws "no residues to parametrize" bondparametrization(Chain("Z"))
+        @test_throws "no residues to parametrize" bondparametrization(AbstractResidue[])
+        @test_throws "no residues to supply a reference frame" atomcoordinates(bp, dihedrals, AbstractResidue[])
 
         # A missing backbone atom, named with its residue.
         let c = loadchain(), r = collectresidues(c)[12]
@@ -885,6 +1100,14 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             @test_throws "which the parametrization does not describe" buildchain(c, bp, X)
         end
 
+        # A reference lacking an atom the parametrization describes.
+        let c = loadchain(), r = collectresidues(c)[5]
+            delete!(r.atoms, "HB2")
+            deleteat!(r.atom_list, findfirst(==("HB2"), r.atom_list))
+            @test_throws ArgumentError buildchain(c, bp, X)
+            @test_throws "atoms in the residues the parametrization describes, but it describes" buildchain(c, bp, X)
+        end
+
         @test [a.coords for a in collectatoms(buildchain(chain, bp, MVector{3}.(X)))] ==
               [a.coords for a in collectatoms(buildchain(chain, bp, X))]
         @test_throws DimensionMismatch buildchain(chain, bp, X[1:end-1])
@@ -937,30 +1160,28 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         end
     end
 
-    if testad
-        @testset "Differentiability" begin
-            function makef(chain)  # Keep inference check self-contained.
-                bp, dihedrals = bondparametrization(chain)
-                return function(dih)
-                    return atomcoordinates(bp, dih, chain)
-                end, length(dihedrals)
-            end
-
-            path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
-            struc = read(path, MMCIFFormat)
-            specializeresnames!(struc)
-            A = only(only(struc))
-
-            makeX, n = makef(A)
-            dih = 2π * (rand(n) .- 0.5)
-            X = makeX(dih)
-            backend = DifferentiationInterface.AutoMooncakeForward(; config=nothing)
-            J = jacobian(makeX, backend, dih)
-            Jmc = [SVector(j.fields.data) for j in J]
-            backend = AutoFiniteDifferences(; fdm=central_fdm(5, 1))
-            J = jacobian(makeX, backend, dih)
-            Jfd = reinterpret(SVector{3,Float64}, J)
-            @test Jmc ≈ Jfd atol=1e-6
+    @testset "Differentiability" begin
+        function makef(chain)  # Keep inference check self-contained.
+            bp, dihedrals = bondparametrization(chain)
+            return function(dih)
+                return atomcoordinates(bp, dih, chain)
+            end, length(dihedrals)
         end
+
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        A = only(only(struc))
+
+        makeX, n = makef(A)
+        dih = 2π * (rand(n) .- 0.5)
+        X = makeX(dih)
+        backend = DifferentiationInterface.AutoMooncakeForward(; config=nothing)
+        J = jacobian(makeX, backend, dih)
+        Jmc = [SVector(j.fields.data) for j in J]
+        backend = AutoFiniteDifferences(; fdm=central_fdm(5, 1))
+        J = jacobian(makeX, backend, dih)
+        Jfd = reinterpret(SVector{3,Float64}, J)
+        @test Jmc ≈ Jfd atol=1e-6
     end
 end
