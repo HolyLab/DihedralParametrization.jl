@@ -8,7 +8,7 @@ atom name.
 
 # Fields
 - `ridx::Int`: the residue number from the source structure (as returned by
-  `BioStructures.resnumber`), not a position in `BondParametrization.residues`.
+  `BioStructures.resnumber`), not a position in `BondParametrization.atoms`.
 - `aname::Symbol`: the atom's name within its residue (e.g. `:CA`, `:HB2`).
 """
 struct AtomData
@@ -22,12 +22,14 @@ end
 
 # A build step that places one atom `d` by extending the chain `a-b-c-d` with
 # the SN-NeRF formula (see `snnerf`): `predecessors` are the indices into the
-# coordinate vector of the already-placed atoms `a`, `b`, `c`; `ℓcd` and
-# `θbcd` are the fixed C–D bond length and B–C–D bond angle; `ϕ` is the
-# dihedral angle to use when `rotatable` is `false` (a rotatable step instead
-# consumes the next entry of `dihedrals`).
+# coordinate vector of the already-placed atoms `a`, `b`, `c`, and `aidx` is
+# the index `d` itself receives. `ℓcd` and `θbcd` are the fixed C–D bond
+# length and B–C–D bond angle; `ϕ` is the dihedral angle to use when
+# `rotatable` is `false` (a rotatable step instead consumes the next entry of
+# `dihedrals`).
 struct Extend{T}
     predecessors::Tuple{Int,Int,Int}              # indices in X of a, b, c
+    aidx::Int                                     # index in X of the atom this step places
     ℓcd::T
     θbcd::T
     rotatable::Bool
@@ -37,19 +39,13 @@ end
 # A build step that places one or more atoms in a fixed (non-rotatable)
 # tetrahedral-style geometry from already-placed atoms `a`, `b`, `c` (indexed
 # by `predecessors`), via `add_to_middle!`. `βs` holds each new atom's
-# coefficients in the local `a-b-c` frame.
+# coefficients in the local `a-b-c` frame; the atoms occupy indices
+# `aidx:aidx+length(βs)-1`.
 struct Branch{T}
     predecessors::Tuple{Int,Int,Int}              # indices in X of a, b, c
+    aidx::Int                                     # index in X of the first atom this step places
     βs::Vector{SVector{3,T}}                      # coefficients for placement from a, b, c
 end
-
-# One residue's sidechain build sequence: the ordered list of `Extend`/`Branch`
-# steps that places its atoms once the backbone and preceding residues are
-# already placed.
-struct ResidueData{T}
-    steps::Vector{Union{Extend{T}, Branch{T}}}    # list of build steps for this residue
-end
-
 
 """
     BondParametrization{T<:Real}
@@ -63,48 +59,38 @@ number of angles.
 - `atoms::Vector{AtomData}`: one entry per atom, in the order
   `atomcoordinates` returns coordinates and `buildchain` consumes them; entry
   `i` names the atom at row `i` of that coordinate vector.
-- `bblengths::Vector{T}`: backbone bond lengths, length `3*nres` where
-  `nres = length(residues)`. Entries `3i-2:3i` for residue `i` are the N–Cα,
-  Cα–C, and C–N(next) lengths; the last residue's "next" atom is OXT.
-- `bbangles::Vector{T}`: backbone bond angles, length `3*nres-1`. Entries
-  `3i-2:3i` for residue `i` are the N–Cα–C, Cα–C–N(next), and
-  C–N(next)–Cα(next) angles; the last residue contributes only the first two
-  of these (there is no following residue).
-- `omegas::Vector{T}`: the ω dihedral of each peptide bond, length
-  `nres - 1`. These are fixed and do not appear in `dihedrals`; entry `i` is
-  the ω between residue `i` and residue `i+1`.
-- `phirotatable::Vector{Bool}`: whether residue `i`'s own φ is a free
-  dihedral (`true`) or fixed by a ring closure such as proline's (`false`),
-  length `nres`. Residue 1 has no φ; entry 1 is unused.
-- `phi::Vector{T}`: the fixed φ value for residue `i`, length `nres`; only
-  meaningful where `!phirotatable[i]`.
-- `residues::Vector{ResidueData{T}}`: each residue's sidechain build
-  sequence — the bond length, bond angle, and rotatability of every
-  sidechain atom placed relative to its already-placed predecessors.
+- `nres::Int`: the number of residues in the chain.
+- `ℓnca::T`, `ℓcac::T`, `θncac::T`: the N–Cα bond length, Cα–C bond length,
+  and N–Cα–C bond angle of residue 1. These fix the reference frame;
+  `atomcoordinates` validates the N, Cα, and C coordinates it is given
+  against them.
+- `steps::Vector{Union{Extend{T},Branch{T}}}`: the build sequence. Atoms
+  `1:3` are residue 1's N, Cα, and C; every later atom is placed by exactly
+  one step, and the steps appear in the order their atoms appear in `atoms`.
+  Each step names the already-placed atoms it builds from, the bond length
+  and bond angle (or, for a `Branch`, the local-frame coefficients) that fix
+  its geometry, and whether its dihedral is rotatable.
+- `ndihedrals::Int`: the number of rotatable steps, and hence the required
+  length of `dihedrals`.
 """
 struct BondParametrization{T<:Real}
-    atoms::Vector{AtomData}    # list of all atoms in the chain
-    bblengths::Vector{T}          # backbone bond lengths, of length 3*nres (we use OXT for the last C)
-    bbangles::Vector{T}           # backbone bond angles, of length 3*nres-1 (")
-    omegas::Vector{T}             # omega dihedrals (fixed and not represented in the dihedrals vector), of length nres-1
-    phirotatable::Vector{Bool}    # whether residue i's own phi is a free dihedral, of length nres (residue 1 has no phi; entry unused)
-    phi::Vector{T}                # fixed phi value for residue i, of length nres (only meaningful where !phirotatable[i])
-    residues::Vector{ResidueData{T}}   # list of residues
+    atoms::Vector{AtomData}
+    nres::Int
+    ℓnca::T                       # residue 1: N–Cα bond length
+    ℓcac::T                       # residue 1: Cα–C bond length
+    θncac::T                      # residue 1: N–Cα–C bond angle
+    steps::Vector{Union{Extend{T},Branch{T}}}
+    ndihedrals::Int
 end
 
-Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(length(bp.residues)) residues")
+Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(bp.nres) residues")
 
 """
     n = ndihedrals(bp::BondParametrization)
 
 Return the number of rotatable dihedrals in `bp`.
 """
-function ndihedrals(bp::BondParametrization)
-    nres = length(bp.residues)
-    nphi_free = count(view(bp.phirotatable, 2:nres))
-    nsidechain_free = sum((count(step -> step isa Extend && step.rotatable, r.steps) for r in bp.residues); init=0)
-    return (nres - 1) + nphi_free + 1 + nsidechain_free
-end
+ndihedrals(bp::BondParametrization) = bp.ndihedrals
 
 # Error for a residue absent from the build tables.
 unrecognized_residue_message(i::Int, rname::AbstractString) =
@@ -162,17 +148,12 @@ The first form stores `bp`'s bond lengths, bond angles, and fixed dihedrals
 `bondparametrization(Float32, chain)`, to use a different real type instead.
 """
 function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
-    # Preallocate arrays
     ress = collectresidues(chain)
     nres = length(ress)
+    nres >= 1 || error("chain has no residues")
     natoms = sum(length(res) for res in ress)
     atoms = Vector{AtomData}(undef, natoms)
-    bblengths = Vector{T}(undef, 3nres)
-    bbangles = Vector{T}(undef, 3nres-1)
-    omegas = deleteat!(omegaangles(ress), 1)   # we'll add one more omega at the end for placement of OXT
-    phirotatable = Vector{Bool}(undef, nres)
-    phi = Vector{T}(undef, nres)
-    residues = Vector{ResidueData{T}}(undef, nres)
+    steps = Vector{Union{Extend{T},Branch{T}}}()
     dihedrals = T[]
 
     atomidx = Dict{String,Int}()
@@ -182,43 +163,53 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         aidx += 1
         atoms[aidx] = AtomData(a)
         atomidx[atomname(a)] = aidx
+        return aidx
     end
 
-    # Backbone atoms
-    ϕs, ψs = phiangles(ress), psiangles(ress)
+    # Backbone atoms. Residue 1's N, Cα, and C are the reference frame; every
+    # later backbone atom gets a step.
+    ϕs, ψs, ωs = phiangles(ress), psiangles(ress), omegaangles(ress)
+    ℓnca = ℓcac = θncac = zero(T)   # residue 1's frame, measured on the first iteration
+    previdx = (0, 0, 0)
     for (i, res) in enumerate(ress)
         empty!(atomidx)
         n, cα, c = res["N"], res["CA"], res["C"]
-        addatom(n); addatom(cα); addatom(c)
-        next = if i < nres
-            ress[i+1]["N"]
+        idxn, idxcα, idxc = addatom(n), addatom(cα), addatom(c)
+        if i == 1
+            ℓnca = norm(n.coords - cα.coords)
+            ℓcac = norm(cα.coords - c.coords)
+            θncac = bondangle(n, cα, c)
         else
-            a = res["OXT"]
-            addatom(a)
-            a
-        end
-        bblengths[3i - 2] = norm(n.coords - cα.coords)      # N - Cα
-        bblengths[3i - 1] = norm(cα.coords - c.coords)      # Cα - C
-        bblengths[3i]     = norm(c.coords - next.coords)    # C - N(next)
-        bbangles[3i - 2] = bondangle(n, cα, c)     # N - Cα - C
-        bbangles[3i - 1] = bondangle(cα, c, next)  # Cα - C - N(next)
-        if i < nres
-            push!(dihedrals, ψs[i])
-            # A ring through N-CA fixes ϕ (as in proline).
+            prevcα, prevc = ress[i-1]["CA"], ress[i-1]["C"]
+            # N_i rotates about the Cα_{i-1}–C_{i-1} bond: ψ_{i-1}.
+            push!(steps, Extend{T}(previdx, idxn, norm(prevc.coords - n.coords),
+                                   bondangle(prevcα, prevc, n), true, ψs[i-1]))
+            push!(dihedrals, ψs[i-1])
+            # Cα_i is fixed by the peptide bond's ω.
+            push!(steps, Extend{T}((previdx[2], previdx[3], idxn), idxcα, norm(n.coords - cα.coords),
+                                   bondangle(prevc, n, cα), false, ωs[i]))
+            # C_i rotates about the N_i–Cα_i bond: φ_i. A ring through N–Cα
+            # fixes φ (as in proline).
             rot = try
-                residue_phi_rotatable[resname(ress[i+1])]
+                residue_phi_rotatable[resname(res)]
             catch err
                 err isa KeyError || rethrow()
-                error(unrecognized_residue_message(i+1, resname(ress[i+1])))
+                error(unrecognized_residue_message(i, resname(res)))
             end
-            phirotatable[i+1] = rot
-            phi[i+1] = ϕs[i+1]
-            rot && push!(dihedrals, ϕs[i+1])
-            nextnext = ress[i+1]["CA"]
-            bbangles[3i] = bondangle(c, next, nextnext)  # C - N(next) - Cα(next)
-        else
-            push!(dihedrals, dihedralangle(n, cα, c, next))  # use OXT for setting the final ψ
+            push!(steps, Extend{T}((previdx[3], idxn, idxcα), idxc, norm(cα.coords - c.coords),
+                                   bondangle(n, cα, c), rot, ϕs[i]))
+            rot && push!(dihedrals, ϕs[i])
         end
+        if i == nres
+            # OXT closes the carboxyl terminus; its dihedral is a final ψ.
+            oxt = res["OXT"]
+            idxoxt = addatom(oxt)
+            ψ′ = dihedralangle(n, cα, c, oxt)
+            push!(steps, Extend{T}((idxn, idxcα, idxc), idxoxt, norm(c.coords - oxt.coords),
+                                   bondangle(cα, c, oxt), true, ψ′))
+            push!(dihedrals, ψ′)
+        end
+        previdx = (idxn, idxcα, idxc)
         resatomidxs[i] = copy(atomidx)
     end
     # Sidechain atoms
@@ -234,12 +225,11 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
             error(unrecognized_residue_message(i, rname))
         end
         atomidx = resatomidxs[i]
-        steps = Vector{Union{Extend{T}, Branch{T}}}()
         for step in seq
             if isa(step, Tuple{String,String,String,String,Bool})
                 # Extend
                 a, b, c, d, rotatable = step
-                i == length(ress) && d == "OXT" && continue # already added
+                i == nres && d == "OXT" && continue # already added
                 atomA, idxA = resolvebuildref(a, i, ress, resatomidxs)
                 atomB, idxB = resolvebuildref(b, i, ress, resatomidxs)
                 atomC, idxC = resolvebuildref(c, i, ress, resatomidxs)
@@ -253,18 +243,17 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 ℓcd = norm(atomC.coords - atomD.coords)
                 θbcd = bondangle(atomB, atomC, atomD)
                 ϕ = dihedralangle(atomA, atomB, atomC, atomD)
-                push!(steps, Extend{T}(predecessors, ℓcd, θbcd, rotatable, ϕ))
+                push!(steps, Extend{T}(predecessors, addatom(atomD), ℓcd, θbcd, rotatable, ϕ))
                 if rotatable
                     push!(dihedrals, ϕ)
                 end
-                addatom(atomD)
             elseif isa(step, Tuple{String,String,String,Vector{String}})
                 # Branch
                 a, b, c, ats = step
-                i == length(ress) && length(ats) == 1 && only(ats) == "OXT" && continue # already added
+                i == nres && length(ats) == 1 && only(ats) == "OXT" && continue # already added
                 predecessors = (atomidx[a], atomidx[b], atomidx[c])
                 βs = betas(a, b, c, ats, res)
-                push!(steps, Branch{T}(predecessors, βs))
+                push!(steps, Branch{T}(predecessors, aidx + 1, βs))
                 for at in ats
                     addatom(res[at])
                 end
@@ -272,10 +261,24 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 error("Invalid step: $step")
             end
         end
-        residues[i] = ResidueData{T}(steps)
     end
-    @assert aidx == natoms   # amino terminus may have two extra H
-    return BondParametrization{T}(atoms, bblengths, bbangles, omegas, phirotatable, phi, residues), dihedrals
+    if aidx != natoms
+        placed = Set(view(atoms, 1:aidx))
+        detail = ""
+        for (i, res) in enumerate(ress)
+            unplaced = sort!([name for name in keys(res.atoms) if AtomData(res[name]) ∉ placed])
+            if !isempty(unplaced)
+                detail = "; residue $i ($(resname(res))) has atom(s) " * join(unplaced, ", ") *
+                         " that residue_build_sequence never places"
+                break
+            end
+        end
+        error("the build sequence placed $aidx atoms but the chain has $natoms$detail")
+    end
+    ndih = count(step -> step isa Extend && step.rotatable, steps)
+    length(dihedrals) == ndih ||
+        error("recorded $(length(dihedrals)) dihedrals for $ndih rotatable steps")
+    return BondParametrization{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndih), dihedrals
 end
 bondparametrization(chain::Chain) = bondparametrization(Float64, chain)
 
@@ -285,7 +288,6 @@ function betas(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T},
     ab = b - a
     ab = ab / norm(ab)
     cb = b - c
-    cb = cb / norm(cb)
     cb = cb / norm(cb)
     n = cross(ab, cb)
     n = n / norm(n)

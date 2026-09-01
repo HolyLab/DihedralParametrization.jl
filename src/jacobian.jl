@@ -30,20 +30,30 @@ struct JacobianPlan
     cidx::Vector{Int}
 end
 
+# Name one atom of `bp` for an error message.
+_atomdesc(bp::BondParametrization, t::Int) =
+    (a = bp.atoms[t]; "residue $(a.ridx) $(a.aname)")
+
+# Describe a build step for an error message.
+_stepdesc(bp::BondParametrization, aidx::Int, predecessors::Tuple{Int,Int,Int}) =
+    "placing $(_atomdesc(bp, aidx)) from " *
+    join((_atomdesc(bp, p) for p in predecessors), ", ")
+
 # Return the deepest dihedral moving the frame, checking that its movesets
-# are nested and that omitted dihedrals rotate about a frame atom.
+# are nested and that omitted dihedrals rotate about a frame atom. The
+# description of the offending step is built only when an error is raised.
 function _framedeepest(deepest::Vector{Int}, parent::Vector{Int}, bidx::Vector{Int}, cidx::Vector{Int},
-                        a::Int, b::Int, c::Int, desc::AbstractString)
+                       a::Int, b::Int, c::Int, bp::BondParametrization, aidx::Int)
     da, db, dc = deepest[a], deepest[b], deepest[c]
     dmax = max(da, db, dc)
     dmax == 0 && return 0
     for (p, dp) in ((a, da), (b, db), (c, dc))
         k = dmax
         while k != dp
-            k == 0 && error("$desc: coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+            k == 0 && error("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
                              "(atom $p's moveset is not nested with dihedral $dmax's chain)")
             if p != bidx[k] && p != cidx[k]
-                error("$desc: coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+                error("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
                       "(atom $p lacks dihedral $k in its moveset but is not one of $k's axis atoms)")
             end
             k = parent[k]
@@ -63,83 +73,44 @@ rigid-rotation formula.
 """
 function jacobianplan(bp::BondParametrization)
     natoms = length(bp.atoms)
-    nres = length(bp.residues)
+    bp.nres >= 1 || error("bp must contain at least one residue")
     deepest = zeros(Int, natoms)
     parent = Int[]
     bidx = Int[]
     cidx = Int[]
 
-    function newdihedral!(b::Int, c::Int, dmax::Int)
-        push!(parent, dmax)
-        push!(bidx, b)
-        push!(cidx, c)
-        return length(parent)
-    end
-
-    # Fixed N, Cα, C reference frame.
-    aidx = 3
-    nres >= 1 || error("bp must contain at least one residue")
-    prev3, prev2, prev1 = 1, 2, 3
-    for i = 2:nres
-        # N_i: ψ_{i-1} about Cα_{i-1}–C_{i-1}.
-        dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "residue $i N (ψ_$(i-1))")
-        aidx += 1
-        k = newdihedral!(prev2, prev1, dmax)
-        deepest[aidx] = k
-        prev3, prev2, prev1 = prev2, prev1, aidx
-        # Cα_i: fixed ω_{i-1}.
-        dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "residue $i Cα (ω)")
-        aidx += 1
-        deepest[aidx] = dmax
-        prev3, prev2, prev1 = prev2, prev1, aidx
-        # C_i: φ_i about N_i–Cα_i when rotatable.
-        dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "residue $i C (φ_$i)")
-        aidx += 1
-        if bp.phirotatable[i]
-            k = newdihedral!(prev2, prev1, dmax)
-            deepest[aidx] = k
-        else
-            deepest[aidx] = dmax
-        end
-        prev3, prev2, prev1 = prev2, prev1, aidx
-    end
-    # OXT: final ψ′ about Cα_nres–C_nres.
-    dmax = _framedeepest(deepest, parent, bidx, cidx, prev3, prev2, prev1, "OXT (ψ′)")
-    aidx += 1
-    k = newdihedral!(prev2, prev1, dmax)
-    deepest[aidx] = k
-
-    for (i, r) in enumerate(bp.residues)
-        for step in r.steps
-            a, b, c = step.predecessors
-            if step isa Extend
-                dmax = _framedeepest(deepest, parent, bidx, cidx, a, b, c,
-                                      "residue $i sidechain Extend $(step.predecessors)")
-                aidx += 1
-                if step.rotatable
-                    k = newdihedral!(b, c, dmax)
-                    deepest[aidx] = k
-                else
-                    deepest[aidx] = dmax
-                end
-            elseif step isa Branch
-                dmax = _framedeepest(deepest, parent, bidx, cidx, a, b, c,
-                                      "residue $i sidechain Branch $(step.predecessors)")
-                for _ = 1:length(step.βs)
-                    aidx += 1
-                    deepest[aidx] = dmax
-                end
+    # Atoms 1:3 are the fixed N, Cα, C reference frame; the rest follow
+    # `bp.steps`, exactly as in `atomcoordinates`.
+    nplaced = 3
+    for step in bp.steps
+        nplaced + 1 == step.aidx ||
+            error("build step places atom $(step.aidx) but $nplaced atoms have been placed; bp.steps is out of order")
+        a, b, c = step.predecessors
+        dmax = _framedeepest(deepest, parent, bidx, cidx, a, b, c, bp, step.aidx)
+        if step isa Extend
+            nplaced += 1
+            if step.rotatable
+                push!(parent, dmax)
+                push!(bidx, b)
+                push!(cidx, c)
+                deepest[step.aidx] = length(parent)
             else
-                error("residue $i: unrecognized build step $step")
+                deepest[step.aidx] = dmax
+            end
+        else
+            for j in eachindex(step.βs)
+                nplaced += 1
+                deepest[step.aidx + j - firstindex(step.βs)] = dmax
             end
         end
     end
-    aidx == natoms || error("built $aidx atoms but bp.atoms has $natoms; traversal does not match atomcoordinates")
+    nplaced == natoms ||
+        error("bp.steps placed $nplaced atoms but bp.atoms has $natoms")
 
     ndih = length(parent)
     expected = ndihedrals(bp)
-    ndih == expected || error("plan has $ndih dihedral columns but atomcoordinates would consume $expected; " *
-                               "traversal does not match atomcoordinates")
+    ndih == expected ||
+        error("plan has $ndih dihedral columns but bp declares $expected rotatable dihedrals")
 
     return JacobianPlan(natoms, ndih, deepest, parent, bidx, cidx)
 end

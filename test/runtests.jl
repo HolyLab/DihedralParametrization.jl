@@ -15,6 +15,17 @@ if testad
     using FiniteDifferences: central_fdm
 end
 
+# Residue `resnum`'s own φ is the dihedral of the `Extend` step that places its C.
+function rotatablephi(bp, resnum)
+    k = findfirst(==(DihedralParametrization.AtomData(resnum, :C)), bp.atoms)
+    k === nothing && error("no C atom for residue $resnum")
+    j = findfirst(s -> s isa DihedralParametrization.Extend && s.aidx == k, bp.steps)
+    return bp.steps[j].rotatable
+end
+
+# Steps that place an atom other than a backbone N, Cα, C, or OXT.
+issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
+
 @testset "DihedralParametrization.jl" begin
     @testset "Code quality (Aqua.jl)" begin
         Aqua.test_all(DihedralParametrization)
@@ -62,6 +73,45 @@ end
         @test atomcoordinates(bp, dihedrals, n, cα, c) == X
         @test atomcoordinates(bp, dihedrals, view(n, :), SVector{3}(cα), c) == X
         @test_throws DimensionMismatch atomcoordinates(bp, dihedrals, n[1:2], cα, c)
+    end
+
+    @testset "Element types, inference, and corrupt parametrizations" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        bp, dihedrals = bondparametrization(chain)
+        X = atomcoordinates(bp, dihedrals, chain)
+        r1 = first(collectresidues(chain))
+        n, ca, c = SVector{3}(r1["N"].coords), SVector{3}(r1["CA"].coords), SVector{3}(r1["C"].coords)
+
+        # A Float32 parametrization with Float64 references promotes to Float64.
+        bp32, d32 = bondparametrization(Float32, chain)
+        X32 = atomcoordinates(bp32, d32, chain)
+        @test length(X32) == length(bp32.atoms)
+        @test eltype(X32) === SVector{3,Float64}
+        @test isapprox(X32, X; rtol=1e-4)
+
+        # Dual-number references propagate into the result.
+        dual(x) = SVector{3}(ForwardDiff.Dual.(x, 1.0))
+        Xdual = atomcoordinates(bp, dihedrals, dual(n), dual(ca), dual(c))
+        @test length(Xdual) == length(bp.atoms)
+        @test eltype(Xdual) <: SVector{3,<:ForwardDiff.Dual}
+        @test all(x -> isapprox(ForwardDiff.value.(x[1]), x[2]; atol=1e-8), zip(Xdual, X))
+
+        @test @inferred(atomcoordinates(bp, dihedrals, n, ca, c)) == X
+        dualdihedrals = ForwardDiff.Dual.(dihedrals, 1.0)
+        @test eltype(@inferred(atomcoordinates(bp, dualdihedrals, n, ca, c))) <: SVector{3,<:ForwardDiff.Dual}
+
+        # `dihedrals` may be any AbstractVector.
+        @test atomcoordinates(bp, view(dihedrals, :), chain) == X
+
+        # A `bp` whose steps leave an atom unplaced is rejected by both
+        # traversals.
+        badbp = DihedralParametrization.BondParametrization{Float64}(
+            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps[1:end-1], bp.ndihedrals)
+        @test_throws "atoms but bp.atoms has" atomcoordinates(badbp, dihedrals, chain)
+        @test_throws "atoms but bp.atoms has" jacobianplan(badbp)
     end
 
     @testset "buildchain" begin
@@ -242,16 +292,21 @@ end
 
         # Backbone: psi for every residue but the last, phi for every residue
         # but the first and any proline, plus one final dihedral to place OXT.
-        nphi_free = count(i -> bp.phirotatable[i], 2:nres)
+        nphi_free = count(i -> rotatablephi(bp, resnumber(ress[i])), 2:nres)
         @test nphi_free == nres - 1 - nproline
-        nsidechain_free = sum(r -> count(step -> step isa DihedralParametrization.Extend && step.rotatable, r.steps), bp.residues)
+        nsidechain_free = count(bp.steps) do step
+            step isa DihedralParametrization.Extend && step.rotatable && issidechain(bp, step)
+        end
         @test length(dihedrals) == (nres - 1) + nphi_free + 1 + nsidechain_free
 
         # No proline contributes a phi or a chi to `dihedrals`.
         prolineresidx = [i for i = 1:nres if resname(ress[i]) in ("PRO", "NPRO", "CPRO")]
         for i in prolineresidx
-            i > 1 && @test !bp.phirotatable[i]
-            @test !any(step -> step isa DihedralParametrization.Extend && step.rotatable, bp.residues[i].steps)
+            i > 1 && @test !rotatablephi(bp, resnumber(ress[i]))
+            @test !any(bp.steps) do step
+                step isa DihedralParametrization.Extend && step.rotatable && issidechain(bp, step) &&
+                    bp.atoms[step.aidx].ridx == resnumber(ress[i])
+            end
         end
     end
 
@@ -324,7 +379,7 @@ end
         # Exercise fixed proline phi.
         prolineidx = findfirst(i -> resname(ress[i]) in ("PRO", "NPRO", "CPRO") && i > 1, 1:nres)
         @test prolineidx !== nothing
-        @test !bp.phirotatable[prolineidx]
+        @test !rotatablephi(bp, resnumber(ress[prolineidx]))
 
         # Map backbone dihedrals to columns.
         idx = 0
@@ -332,7 +387,7 @@ end
         phicol = Dict{Int,Int}()
         for i = 1:nres-1
             psicol[i] = (idx += 1)
-            bp.phirotatable[i+1] && (phicol[i+1] = (idx += 1))
+            rotatablephi(bp, resnumber(ress[i+1])) && (phicol[i+1] = (idx += 1))
         end
 
         # A carbonyl O with a +N reference moves under psi_i.
@@ -454,8 +509,8 @@ end
         @test_throws "rotatable dihedrals" atomcoordinates(bp, dihedrals[1:end-1], chain)
         @test_throws "rotatable dihedrals" atomcoordinates(bp, vcat(dihedrals, 0.0), chain)
 
-        # An un-renamed HIS trips the phi-rotatability lookup (residue 6's
-        # name is checked while encoding residue 5's backbone).
+        # An un-renamed HIS trips the phi-rotatability lookup, which runs
+        # while the residue's own backbone is encoded.
         strucraw = read(path, MMCIFFormat)
         chainraw = only(only(strucraw))
         @test_throws "histidine must be disambiguated as HID/HIE/HIP" bondparametrization(chainraw)

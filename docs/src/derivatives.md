@@ -115,30 +115,33 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   `J` is an ordinary matrix, so `J' * J`, `J \ r`, and factorizations work
   directly.
 
-- **Layout and ordering of `dihedrals`.** For a chain of `nres` residues,
-  `dihedrals` (of length `ndihedrals(bp)`) is built in two passes:
+- **Layout and ordering of `dihedrals`.** `bp.steps` is a single build
+  sequence: atoms `1:3` are residue 1's N, Cα, and C, and every later atom is
+  placed by exactly one step, in the order the atoms appear in `bp.atoms`.
+  The entries of `dihedrals` (of length `ndihedrals(bp)`) correspond, in
+  order, to the rotatable `Extend` steps of that sequence. For a chain of
+  `nres` residues the steps run:
 
-  1. **Backbone**, residue by residue from residue 1 to residue `nres-1`: for
-     each residue `i`, the entry for ψ_i (the dihedral about the Cα_i–C_i
-     bond, which places N of residue `i+1`) always appears, immediately
-     followed by the entry for φ_{i+1} (about the N_{i+1}–Cα_{i+1} bond,
-     which places C of residue `i+1`) *only if* `bp.phirotatable[i+1]` is
-     `true`. After all `nres-1` residues, one final entry places the
-     terminal OXT atom (about the Cα_nres–C_nres bond) and always appears.
+  1. **Backbone**, residue by residue from residue 2 to residue `nres`: the
+     step placing N_i (rotatable, ψ_{i-1}, about the Cα_{i-1}–C_{i-1} bond),
+     the step placing Cα_i (fixed by ω_{i-1}), and the step placing C_i
+     (φ_i, about the N_i–Cα_i bond, rotatable unless a ring fixes it). After
+     the last residue's C comes the step placing the terminal OXT atom
+     (rotatable, about the Cα_nres–C_nres bond).
   2. **Sidechains**, residue by residue from residue 1 to residue `nres`: for
-     each residue, one entry per rotatable `Extend` build step in that
-     residue's build sequence, in the sequence's own order (typically χ1,
+     each residue, its build sequence's own steps in order (typically χ1,
      χ2, … outward from Cα, though a residue's sequence can also expose a
      single-bond rotation that is not conventionally numbered as a χ angle,
      such as a terminal methyl's orientation).
 
-- **Fixed vs. rotatable dihedrals.** Three kinds of dihedral angle are fixed
-  by `bp` and never appear in `dihedrals`:
+- **Fixed vs. rotatable dihedrals.** A step whose `rotatable` field is
+  `false`, and every `Branch` step, uses geometry stored in `bp` rather than
+  an entry of `dihedrals`. Three kinds of dihedral angle are fixed this way:
 
-  + Every ω (the dihedral about each peptide C–N bond), stored in
-    `bp.omegas`.
-  + φ for a residue whose ring fixes it, such as proline: there
-    `bp.phirotatable[i]` is `false` and the fixed value is `bp.phi[i]`.
+  + Every ω (the dihedral about each peptide C–N bond), held in the `ϕ`
+    field of the step that places Cα.
+  + φ for a residue whose ring fixes it, such as proline: the step placing
+    that residue's C is marked non-rotatable and holds the fixed value.
     Proline's ring also fixes its χ1 and χ2, which appear as non-rotatable
     `Extend` steps rather than entries in `dihedrals`.
   + Any other `Extend` build step marked non-rotatable, whose fixed value is
