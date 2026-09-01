@@ -11,8 +11,9 @@ call separates a protein chain into fixed geometry (bond lengths, bond angles,
 and non-rotatable dihedrals such as ω) and a vector of rotatable dihedral
 angles. [`atomcoordinates`](@ref) reconstructs the atom coordinates, and
 [`dihedralangles`](@ref) measures the dihedral vector back out of a set of
-coordinates. This representation preserves bond lengths and angles while
-using fewer parameters than Cartesian coordinates.
+coordinates; [`atomcoordinates!`](@ref) and [`dihedralangles!`](@ref) write
+into preallocated output. This representation preserves bond lengths and
+angles while using fewer parameters than Cartesian coordinates.
 
 The [Derivatives](@ref) page documents the Jacobian and related matrix-vector
 products for optimization and sampling in dihedral coordinates.

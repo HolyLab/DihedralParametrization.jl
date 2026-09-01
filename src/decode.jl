@@ -32,8 +32,8 @@ function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
     return c + M * d2
 end
 
-function add_to_middle!(X, a::AbstractVector, b::AbstractVector, c::AbstractVector, βs)
-    # Place atoms such as Cβ in tetrahedral geometry.
+function add_to_middle!(X, aidx::Int, a::AbstractVector, b::AbstractVector, c::AbstractVector, βs)
+    # Place atoms such as Cβ in tetrahedral geometry, at `X[aidx:aidx+length(βs)-1]`.
     ab = b - a
     ab = ab / norm(ab)
     cb = b - c
@@ -41,14 +41,36 @@ function add_to_middle!(X, a::AbstractVector, b::AbstractVector, c::AbstractVect
     n = cross(ab, cb)
     n = n / norm(n)
     M = [ab cb n]
-    for β in βs
-        push!(X, b + M * β)
+    for (i, β) in pairs(βs)
+        X[aidx + i - firstindex(βs)] = b + M * β
     end
     return X
 end
 
 add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs) =
-    add_to_middle!(promote_type(typeof(a), typeof(b), typeof(c))[], a, b, c, βs)
+    add_to_middle!(Vector{promote_type(typeof(a), typeof(b), typeof(c))}(undef, length(βs)), 1, a, b, c, βs)
+
+# Convert a reference frame to a homogeneous tuple of static 3-vectors.
+frametuple(frame::NTuple{3,SVector{3,T}}) where {T<:Real} = frame
+function frametuple((n, cα, c)::NTuple{3,AbstractVector})
+    T = promote_type(eltype(n), eltype(cα), eltype(c))
+    return (SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
+end
+frametuple(frame::NTuple{3,Atom}) = frametuple(map(a -> a.coords, frame))
+function frametuple(chain::Chain)
+    nter = first(chain)::Residue
+    return frametuple((nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom))
+end
+
+# The frame with residue 1's N at the origin, Cα on the positive x-axis, and
+# C in the xy-plane with positive y.
+function canonicalframe(bp::BondParametrization{T}) where {T}
+    sθ, cθ = sincos(bp.θncac)
+    n = zero(SVector{3,T})
+    cα = SVector{3,T}(bp.ℓnca, zero(T), zero(T))
+    c = SVector{3,T}(bp.ℓnca - bp.ℓcac * cθ, bp.ℓcac * sθ, zero(T))
+    return (n, cα, c)
+end
 
 """
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c))
@@ -72,18 +94,46 @@ whose build sequence is inconsistent with its own atom and dihedral counts.
 `bp`, `dihedrals`, and the reference coordinates. This permits automatic
 differentiation types in `dihedrals`.
 
+See [`atomcoordinates!`](@ref) for the in-place form.
+
 # Extended help
 
 Reference coordinates are converted to `SVector{3,T}` using their promoted
 element type. A tuple of `Atom`s contributes each atom's `coords`; the
 `Chain` method uses the first residue's N, CA, and C atoms.
 """
-function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S},
-                         (n, cα, c)::NTuple{3,SVector{3,Tref}}) where {T<:Real, S<:Real, Tref<:Real}
+function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame)
+    n, cα, c = frametuple(frame)
+    R = promote_type(eltype(bp), eltype(dihedrals), eltype(n))
+    X = Vector{SVector{3,R}}(undef, length(bp.atoms))
+    return _atomcoordinates!(X, bp, dihedrals, n, cα, c)
+end
+atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector) =
+    atomcoordinates(bp, dihedrals, canonicalframe(bp))
+
+"""
+    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c))
+    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
+    atomcoordinates!(X, bp::BondParametrization, dihedrals::AbstractVector)
+
+Write [`atomcoordinates`](@ref) into `X` and return it. `X` must contain
+`length(bp.atoms)` 3-vectors. Coordinates are converted to `eltype(X)`.
+"""
+atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector, frame) =
+    _atomcoordinates!(X, bp, dihedrals, frametuple(frame)...)
+atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector) =
+    atomcoordinates!(X, bp, dihedrals, canonicalframe(bp))
+
+function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector,
+                           n::SVector{3,Tref}, cα::SVector{3,Tref}, c::SVector{3,Tref}) where {Tref<:Real}
+    Base.require_one_based_indexing(X)
     # Check that the inputs are consistent with `bp`
     nd = ndihedrals(bp)
     length(dihedrals) == nd ||
         throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
+    natoms = length(bp.atoms)
+    length(X) == natoms ||
+        throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $natoms atoms"))
     ℓnca, ℓcac = norm(cα - n), norm(c - cα)
     θncac = bondangle(n - cα, c - cα)
     ℓnca ≈ bp.ℓnca ||
@@ -94,46 +144,32 @@ function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S
         throw(ArgumentError("the reference N–Cα–C angle is $θncac but bp requires $(bp.θncac)"))
 
     # Atoms 1:3 are the reference frame; `bp.steps` places all the rest.
-    R = promote_type(T, S, Tref)
-    X = sizehint!(SVector{3,R}[n, cα, c], length(bp.atoms))
+    R = promote_type(eltype(bp), eltype(dihedrals), Tref)
+    X[1], X[2], X[3] = n, cα, c
+    placed = 3                        # number of atoms placed so far
     idx = firstindex(dihedrals) - 1   # index of the last dihedral consumed
     for step in bp.steps
-        length(X) + 1 == step.aidx ||
-            throw(ArgumentError("build step places atom $(step.aidx) but $(length(X)) atoms have been placed; bp.steps is out of order"))
+        placed + 1 == step.aidx ||
+            throw(ArgumentError("build step places atom $(step.aidx) but $placed atoms have been placed; bp.steps is out of order"))
+        nplaced = step isa Extend ? 1 : length(step.βs)
+        placed + nplaced <= natoms ||
+            throw(ArgumentError("bp.steps places atom $(placed + nplaced) but bp.atoms has $natoms"))
         a, b, cc = X[SVector(step.predecessors)]
         if step isa Extend
             ϕ = step.rotatable ? convert(R, dihedrals[idx+=1]) : convert(R, step.ϕ)
-            push!(X, snnerf(a, b, cc, step.ℓcd, step.θbcd, ϕ))
+            X[step.aidx] = snnerf(a, b, cc, step.ℓcd, step.θbcd, ϕ)
         else
-            add_to_middle!(X, a, b, cc, step.βs)
+            add_to_middle!(X, step.aidx, a, b, cc, step.βs)
         end
+        placed += nplaced
     end
-    length(X) == length(bp.atoms) ||
-        throw(ArgumentError("bp.steps placed $(length(X)) atoms but bp.atoms has $(length(bp.atoms))"))
+    placed == natoms ||
+        throw(ArgumentError("bp.steps placed $placed atoms but bp.atoms has $natoms"))
     nconsumed = idx - firstindex(dihedrals) + 1
     nconsumed == nd ||
         throw(ArgumentError("bp.steps consumed $nconsumed dihedrals but bp declares $nd"))
     return X
 end
-# Convert frames to homogeneous tuples of static 3-vectors.
-function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c)::NTuple{3,AbstractVector})
-    T = promote_type(eltype(n), eltype(cα), eltype(c))
-    return atomcoordinates(bp, dihedrals, (SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c)))
-end
-atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame::NTuple{3,Atom}) =
-    atomcoordinates(bp, dihedrals, map(a -> a.coords, frame))
-function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector) where {T<:Real}
-    sθ, cθ = sincos(bp.θncac)
-    n = zero(SVector{3,T})
-    cα = SVector{3,T}(bp.ℓnca, zero(T), zero(T))
-    c = SVector{3,T}(bp.ℓnca - bp.ℓcac * cθ, bp.ℓcac * sθ, zero(T))
-    return atomcoordinates(bp, dihedrals, (n, cα, c))
-end
-function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
-    nter = first(chain)::Residue
-    return atomcoordinates(bp, dihedrals, (nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom))
-end
-
 """
     out = buildchain(reference::Chain, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
 

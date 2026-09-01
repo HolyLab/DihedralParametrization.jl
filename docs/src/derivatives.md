@@ -34,8 +34,8 @@ as nested rigid rotations.
   `ndih × ndih` Hessian of `w ⋅ X`, not a Hessian-vector product.
 
 These functions take a `JacobianPlan` and coordinates `X`; call
-`atomcoordinates` first. The vector products also take a per-atom vector `w`
-or per-dihedral vector `v`.
+`atomcoordinates` (or, to reuse a buffer, `atomcoordinates!`) first. The
+vector products also take a per-atom vector `w` or per-dihedral vector `v`.
 
 ## Worked example: gradient of a coordinate objective
 

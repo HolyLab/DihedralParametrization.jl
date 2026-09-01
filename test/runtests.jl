@@ -73,6 +73,17 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test atomcoordinates(bp, dihedrals, (r1["N"], r1["CA"], r1["C"])) == X
         @test_throws DimensionMismatch atomcoordinates(bp, dihedrals, (n[1:2], cα, c))
         @test_throws MethodError atomcoordinates(bp, dihedrals, (r1["N"], cα, c))
+
+        # In-place decode supports each frame form.
+        Xbuf = similar(X)
+        @test atomcoordinates!(Xbuf, bp, dihedrals, chain) === Xbuf
+        @test Xbuf == X
+        @test atomcoordinates!(fill!(Xbuf, zero(eltype(X))), bp, dihedrals, (n, cα, c)) == X
+        @test atomcoordinates!(fill!(Xbuf, zero(eltype(X))), bp, dihedrals, (r1["N"], r1["CA"], r1["C"])) == X
+        @test atomcoordinates!(fill!(Xbuf, zero(eltype(X))), bp, dihedrals) == atomcoordinates(bp, dihedrals)
+        @test_throws DimensionMismatch atomcoordinates!(similar(X, length(X) - 1), bp, dihedrals, chain)
+        @test_throws DimensionMismatch atomcoordinates!(Xbuf, bp, dihedrals[1:end-1], chain)
+        @test_throws "reference N–Cα distance" atomcoordinates!(Xbuf, bp, dihedrals, (n, cα .+ 0.5, c))
     end
 
     @testset "show" begin
@@ -201,6 +212,13 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws DimensionMismatch dihedralangles(bp, X[1:end-1])
         @test_throws DimensionMismatch dihedralangles(bp, push!(copy(X), X[end]))
 
+        # In-place encode.
+        dbuf = similar(dihedrals)
+        @test dihedralangles!(dbuf, bp, X) === dbuf
+        @test dbuf == dihedralangles(bp, X)
+        @test_throws DimensionMismatch dihedralangles!(dbuf[1:end-1], bp, X)
+        @test_throws DimensionMismatch dihedralangles!(dbuf, bp, X[1:end-1])
+
         # A chain whose atom count differs from the parametrization's.
         strucshort = read(path, MMCIFFormat)
         specializeresnames!(strucshort)
@@ -287,6 +305,11 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         Xmixed = atomcoordinates(bp32, d32, (Float32.(n), ca, c))
         @test eltype(Xmixed) === SVector{3,Float64}
         @test isapprox(Xmixed, X; rtol=1e-4)
+        # The in-place form stores into whatever element type `X` has.
+        Xbuf32 = Vector{SVector{3,Float32}}(undef, length(X))
+        @test atomcoordinates!(Xbuf32, bp, dihedrals, chain) === Xbuf32
+        @test isapprox(Xbuf32, X; rtol=1e-5)
+        @test @inferred(atomcoordinates!(Xbuf32, bp, dihedrals, (n, ca, c))) === Xbuf32
 
         # Dual-number references propagate into the result.
         dual(x) = SVector{3}(ForwardDiff.Dual.(x, 1.0))

@@ -177,26 +177,41 @@ method takes the coordinates from `chain`, matched through `bp.atoms`, and
 throws an `ArgumentError` if the chain's atom count differs from `bp`'s or if
 an atom named in `bp.atoms` is absent.
 
-The result promotes the element types of `bp` and the coordinates.
+The result promotes the element types of `bp` and the coordinates. See
+[`dihedralangles!`](@ref) for the in-place form.
 """
 function dihedralangles(bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    R = promote_type(eltype(bp), eltype(eltype(X)))
+    return dihedralangles!(Vector{R}(undef, ndihedrals(bp)), bp, X)
+end
+
+function dihedralangles(bp::BondParametrization, chain::Chain)
+    return dihedralangles(bp, chaincoordinates(bp, chain))
+end
+
+"""
+    dihedralangles!(dihedrals, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+
+Write [`dihedralangles`](@ref) into `dihedrals` and return it. The output must
+have `ndihedrals(bp)` entries.
+"""
+function dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::AbstractVector{<:SVector{3}})
+    Base.require_one_based_indexing(X)
     length(X) == length(bp.atoms) ||
         throw(DimensionMismatch("length(X) = $(length(X)) does not match bp's $(length(bp.atoms)) atoms"))
-    R = promote_type(eltype(bp), eltype(eltype(X)))
-    dihedrals = Vector{R}(undef, ndihedrals(bp))
-    k = 0
+    nd = ndihedrals(bp)
+    length(dihedrals) == nd ||
+        throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
+    nrot = count(step -> step isa Extend && step.rotatable, bp.steps)
+    nrot == nd ||
+        throw(ArgumentError("bp.steps has $nrot rotatable steps but bp declares $nd"))
+    k = firstindex(dihedrals) - 1
     for step in bp.steps
         (step isa Extend && step.rotatable) || continue
         a, b, c = step.predecessors
         dihedrals[k+=1] = dihedralangle(X[b] - X[a], X[c] - X[b], X[step.aidx] - X[c])
     end
-    k == ndihedrals(bp) ||
-        throw(ArgumentError("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))"))
     return dihedrals
-end
-
-function dihedralangles(bp::BondParametrization, chain::Chain)
-    return dihedralangles(bp, chaincoordinates(bp, chain))
 end
 
 # Collect `chain`'s coordinates in the order of `bp.atoms`.
