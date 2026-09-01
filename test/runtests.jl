@@ -305,6 +305,35 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         Xmixed = atomcoordinates(bp32, d32, (Float32.(n), ca, c))
         @test eltype(Xmixed) === SVector{3,Float64}
         @test isapprox(Xmixed, X; rtol=1e-4)
+        # Converting constructor and `convert`.
+        bp32c = BondParametrization{Float32}(bp)
+        @test eltype(bp32c) === Float32
+        @test bp32c == bp32
+        @test isapprox(atomcoordinates(bp32c, d32, chain), X; rtol=1e-4)
+        @test convert(BondParametrization{Float32}, bp) == bp32c
+        @test convert(BondParametrization{Float64}, bp) === bp
+        bpcopy = BondParametrization{Float64}(bp)
+        @test bpcopy == bp && bpcopy !== bp
+        @test bpcopy.steps !== bp.steps && bpcopy.atoms !== bp.atoms
+        bp64 = BondParametrization{Float64}(bp32c)
+        @test eltype(bp64) === Float64
+        @test bp64.atoms == bp.atoms && bp64.nres == bp.nres && bp64.ndihedrals == bp.ndihedrals
+        @test isapprox(bp64.ℓnca, bp.ℓnca; rtol=1e-6) && isapprox(bp64.ℓcac, bp.ℓcac; rtol=1e-6) &&
+              isapprox(bp64.θncac, bp.θncac; rtol=1e-6)
+        @test all(zip(bp64.steps, bp.steps)) do (s64, s)
+            s64.predecessors == s.predecessors && s64.aidx == s.aidx &&
+                (s isa DihedralParametrization.Extend ?
+                    (s64 isa DihedralParametrization.Extend && s64.rotatable == s.rotatable &&
+                     isapprox(s64.ℓcd, s.ℓcd; rtol=1e-6) && isapprox(s64.θbcd, s.θbcd; rtol=1e-6) &&
+                     isapprox(s64.ϕ, s.ϕ; atol=1e-5)) :
+                    (s64 isa DihedralParametrization.Branch && isapprox(s64.βs, s.βs; rtol=1e-6)))
+        end
+        # A dual-number `bp` differentiates with respect to the bond geometry.
+        D = typeof(ForwardDiff.Dual(1.0, 1.0))
+        bpdual = BondParametrization{D}(bp)
+        @test eltype(bpdual) === D
+        @test eltype(atomcoordinates(bpdual, dihedrals)) <: SVector{3,<:ForwardDiff.Dual}
+
         # The in-place form stores into whatever element type `X` has.
         Xbuf32 = Vector{SVector{3,Float32}}(undef, length(X))
         @test atomcoordinates!(Xbuf32, bp, dihedrals, chain) === Xbuf32

@@ -123,6 +123,29 @@ struct BondParametrization{T<:Real}
     end
 end
 
+# Convert each variant before rebuilding the union-typed step vector.
+Extend{S}(e::Extend) where {S} = Extend{S}(e.predecessors, e.aidx, e.ℓcd, e.θbcd, e.rotatable, e.ϕ)
+Branch{S}(b::Branch) where {S} = Branch{S}(b.predecessors, b.aidx, SVector{3,S}.(b.βs))
+
+"""
+    BondParametrization{S}(bp::BondParametrization)
+
+Copy `bp`, converting its geometric parameters to element type `S`.
+`convert(BondParametrization{S}, bp)` returns `bp` unchanged when its element
+type is already `S`.
+"""
+function BondParametrization{S}(bp::BondParametrization) where {S<:Real}
+    steps = Vector{Union{Extend{S},Branch{S}}}(undef, length(bp.steps))
+    for (i, step) in pairs(bp.steps)
+        steps[i] = step isa Extend ? Extend{S}(step) : Branch{S}(step)
+    end
+    return BondParametrization{S}(copy(bp.atoms), bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, steps, bp.ndihedrals)
+end
+
+# The `Real` bounds ensure that the identity method is more specific.
+Base.convert(::Type{BondParametrization{S}}, bp::BondParametrization) where {S<:Real} = BondParametrization{S}(bp)
+Base.convert(::Type{BondParametrization{T}}, bp::BondParametrization{T}) where {T<:Real} = bp
+
 Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(bp.nres) residues")
 
 Base.:(==)(x::BondParametrization, y::BondParametrization) = _fieldsmatch(==, x, y)
