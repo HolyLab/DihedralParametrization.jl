@@ -1,9 +1,9 @@
 # DihedralParametrization
 
-[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://HolyLab.github.io/DihedralParametrization.jl/stable/)
-[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://HolyLab.github.io/DihedralParametrization.jl/dev/)
-[![Build Status](https://github.com/HolyLab/DihedralParametrization.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/HolyLab/DihedralParametrization.jl/actions/workflows/CI.yml?query=branch%3Amain)
-[![Coverage](https://codecov.io/gh/HolyLab/DihedralParametrization.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/HolyLab/DihedralParametrization.jl)
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://JuliaStructBio.github.io/DihedralParametrization.jl/stable/)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://JuliaStructBio.github.io/DihedralParametrization.jl/dev/)
+[![Build Status](https://github.com/JuliaStructBio/DihedralParametrization.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/JuliaStructBio/DihedralParametrization.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/JuliaStructBio/DihedralParametrization.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/JuliaStructBio/DihedralParametrization.jl)
 [![Aqua QA](https://juliatesting.github.io/Aqua.jl/dev/assets/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
 DihedralParametrization represents [protein structures](https://en.wikipedia.org/wiki/Protein_structure)
@@ -40,5 +40,5 @@ julia> newchain = buildchain(struc["A"], bp, atomcoordinates(bp, randdh, struc["
 
 ![structure comparison](docs/src/assets/randchain.png)
 
-See the [documentation](https://HolyLab.github.io/DihedralParametrization.jl/stable/)
+See the [documentation](https://JuliaStructBio.github.io/DihedralParametrization.jl/stable/)
 for input requirements, a complete example, and derivative functions.
