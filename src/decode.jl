@@ -51,17 +51,18 @@ add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs) =
     add_to_middle!(promote_type(typeof(a), typeof(b), typeof(c))[], a, b, c, βs)
 
 """
-    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
-    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::Atom, cα::Atom, c::Atom)
+    X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c))
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
     X = atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector)
 
 Compute atom coordinates from `bp`, rotatable angles `dihedrals` (in radians),
-and the first backbone N, Cα, and C coordinates. Results follow the order of
-`bp.atoms`.
+and a reference frame given by residue 1's backbone N, Cα, and C. Results
+follow the order of `bp.atoms`.
 
-The two-argument form places residue 1's N at the origin, Cα on the positive
-x-axis, and C in the xy-plane with positive y.
+The frame may be a tuple `(n, cα, c)` of three 3-vectors or three `Atom`s,
+or a `Chain` whose first residue supplies the atoms. The two-argument form
+places residue 1's N at the origin, Cα on the positive x-axis, and C in the
+xy-plane with positive y.
 
 `length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
 thrown otherwise. Reference coordinates whose N–Cα distance, Cα–C distance,
@@ -74,11 +75,11 @@ differentiation types in `dihedrals`.
 # Extended help
 
 Reference coordinates are converted to `SVector{3,T}` using their promoted
-element type. The `Atom` method reads `coords`; the `Chain` method uses the
-first residue's N, CA, and C atoms.
+element type. A tuple of `Atom`s contributes each atom's `coords`; the
+`Chain` method uses the first residue's N, CA, and C atoms.
 """
 function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S},
-                         n::SVector{3,Tref}, cα::SVector{3,Tref}, c::SVector{3,Tref}) where {T<:Real, S<:Real, Tref<:Real}
+                         (n, cα, c)::NTuple{3,SVector{3,Tref}}) where {T<:Real, S<:Real, Tref<:Real}
     # Check that the inputs are consistent with `bp`
     nd = ndihedrals(bp)
     length(dihedrals) == nd ||
@@ -114,21 +115,23 @@ function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector{S
         throw(ArgumentError("bp.steps consumed $nconsumed dihedrals but bp declares $nd"))
     return X
 end
-function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::AbstractVector, cα::AbstractVector, c::AbstractVector)
+# Convert frames to homogeneous tuples of static 3-vectors.
+function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, (n, cα, c)::NTuple{3,AbstractVector})
     T = promote_type(eltype(n), eltype(cα), eltype(c))
-    return atomcoordinates(bp, dihedrals, SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
+    return atomcoordinates(bp, dihedrals, (SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c)))
 end
-atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, n::Atom, cα::Atom, c::Atom) = atomcoordinates(bp, dihedrals, n.coords, cα.coords, c.coords)
+atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame::NTuple{3,Atom}) =
+    atomcoordinates(bp, dihedrals, map(a -> a.coords, frame))
 function atomcoordinates(bp::BondParametrization{T}, dihedrals::AbstractVector) where {T<:Real}
     sθ, cθ = sincos(bp.θncac)
     n = zero(SVector{3,T})
     cα = SVector{3,T}(bp.ℓnca, zero(T), zero(T))
     c = SVector{3,T}(bp.ℓnca - bp.ℓcac * cθ, bp.ℓcac * sθ, zero(T))
-    return atomcoordinates(bp, dihedrals, n, cα, c)
+    return atomcoordinates(bp, dihedrals, (n, cα, c))
 end
 function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, chain::Chain)
     nter = first(chain)::Residue
-    return atomcoordinates(bp, dihedrals, nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom)
+    return atomcoordinates(bp, dihedrals, (nter["N"]::Atom, nter["CA"]::Atom, nter["C"]::Atom))
 end
 
 """

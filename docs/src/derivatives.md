@@ -4,7 +4,7 @@ CurrentModule = DihedralParametrization
 
 # Derivatives
 
-For `X = atomcoordinates(bp, θ, n, cα, c)`, the package provides the
+For `X = atomcoordinates(bp, θ, (n, cα, c))`, the package provides the
 Jacobian `J = ∂X/∂θ` and products involving its first and second
 derivatives. Each rotatable dihedral rotates its dependent atoms about a fixed
 axis. Thus `∂X[t]/∂θ_k` is zero when `k` does not affect atom `t`; otherwise,
@@ -50,18 +50,18 @@ chain = struc["A"]
 bp, dihedrals = bondparametrization(chain)
 plan = jacobianplan(bp)
 
-n, cα, c = chain[1]["N"].coords, chain[1]["CA"].coords, chain[1]["C"].coords
+frame = (chain[1]["N"], chain[1]["CA"], chain[1]["C"])
 
-function objective_and_grad(bp, plan, θ, n, cα, c, target)
-    X = atomcoordinates(bp, θ, n, cα, c)
+function objective_and_grad(bp, plan, θ, frame, target)
+    X = atomcoordinates(bp, θ, frame)
     w = X .- target                     # gradient of (1/2) Σ |X - target|² w.r.t. X
     val = 0.5 * sum(v -> sum(abs2, v), w)
     g = vjp!(zeros(plan.ndih), plan, X, w)
     return val, g
 end
 
-target = atomcoordinates(bp, dihedrals, n, cα, c)  # a structure to match
-val, g = objective_and_grad(bp, plan, dihedrals, n, cα, c, target)
+target = atomcoordinates(bp, dihedrals, frame)  # a structure to match
+val, g = objective_and_grad(bp, plan, dihedrals, frame, target)
 ```
 
 `g` is the gradient of `val` with respect to `dihedrals`.
