@@ -17,22 +17,26 @@ function AtomKey(a::Atom)
     res = residue(a)
     # An insertion code would make the residue number ambiguous as a key.
     inscode(res) == ' ' ||
-        throw(ArgumentError("residue $(resid(res; full=false)) ($(resname(res))): insertion codes are not supported"))
+        throw(ArgumentError("$(resdesc(res)): insertion codes are not supported"))
     return AtomKey(resnumber(res), Symbol(atomname(a)))
 end
 
-# Fetch a backbone atom (N, CA, C, or the carboxyl terminus's OXT) from
-# residue `i`.
-function backboneatom(res, name::AbstractString, i::Integer)
+# Name a residue in an error message by its number in the source structure
+# (with its insertion code, if it has one) and its name, never by its
+# position in the chain.
+resdesc(res::Residue) = "residue $(resid(res; full=false)) ($(resname(res)))"
+
+# Fetch a backbone atom (N, CA, C, or the carboxyl terminus's OXT) from `res`.
+function backboneatom(res::Residue, name::AbstractString)
     haskey(res.atoms, name) ||
-        throw(ArgumentError("residue $i ($(resname(res))): missing backbone atom \"$name\""))
+        throw(ArgumentError("$(resdesc(res)): missing backbone atom \"$name\""))
     return res[name]
 end
 
-# Fetch an atom that `residue_build_sequence` names for residue `i`.
-function templateatom(res, name::AbstractString, i::Integer)
+# Fetch an atom that `residue_build_sequence` names for `res`.
+function templateatom(res::Residue, name::AbstractString)
     haskey(res.atoms, name) ||
-        throw(ArgumentError("residue $i ($(resname(res))): cannot find atom \"$name\" required by residue_build_sequence"))
+        throw(ArgumentError("$(resdesc(res)): cannot find atom \"$name\" required by residue_build_sequence"))
     return res[name]
 end
 
@@ -126,8 +130,8 @@ Return the number of rotatable dihedrals in `bp`.
 ndihedrals(bp::BondParametrization) = bp.ndihedrals
 
 # Error for a residue absent from the build tables.
-unrecognized_residue_message(i::Int, rname::AbstractString) =
-    "residue $i ($rname): unrecognized residue name — " *
+unrecognized_residue_message(res::Residue) =
+    "$(resdesc(res)): unrecognized residue name — " *
     "histidine must be disambiguated as HID/HIE/HIP, and amino-/carboxyl-terminal " *
     "residues need an \"N\"/\"C\"-prefixed name; BioStructures.specializeresnames! " *
     "assigns these names (see the documentation's \"Pre-requisites\" section)"
@@ -149,12 +153,13 @@ function resolvebuildref(ref::AbstractString, i::Int, ress, resatomidxs)
         aname = ref[2:end]
         j = c1 == '-' ? i - 1 : i + 1
         ok = 1 <= j <= length(ress) && (c1 == '-' ? sequentialresidues(ress[j], ress[i]) : sequentialresidues(ress[i], ress[j]))
-        ok || throw(ArgumentError("residue $i ($(resname(ress[i]))): cannot resolve build-step reference \"$ref\" — " *
-                                  (1 <= j <= length(ress) ? "residue $j is not sequential with residue $i (chain break)" :
-                                   "residue $i has no " * (c1 == '-' ? "preceding" : "following") * " residue")))
-        return templateatom(ress[j], aname, j), resatomidxs[j][aname]
+        ok || throw(ArgumentError("$(resdesc(ress[i])): cannot resolve build-step reference \"$ref\" — " *
+                                  (1 <= j <= length(ress) ?
+                                   "residue $(resnumber(ress[j])) is not sequential with residue $(resnumber(ress[i])) (chain break)" :
+                                   "it has no " * (c1 == '-' ? "preceding" : "following") * " residue")))
+        return templateatom(ress[j], aname), resatomidxs[j][aname]
     else
-        return templateatom(ress[i], ref, i), resatomidxs[i][ref]
+        return templateatom(ress[i], ref), resatomidxs[i][ref]
     end
 end
 
@@ -335,7 +340,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     previdx = (0, 0, 0)
     for (i, res) in enumerate(ress)
         empty!(atomidx)
-        n, cα, c = backboneatom(res, "N", i), backboneatom(res, "CA", i), backboneatom(res, "C", i)
+        n, cα, c = backboneatom(res, "N"), backboneatom(res, "CA"), backboneatom(res, "C")
         idxn, idxcα, idxc = addatom(n), addatom(cα), addatom(c)
         if i == 1
             ℓnca = norm(n.coords - cα.coords)
@@ -352,13 +357,13 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
             # C_i rotates about the N_i–Cα_i bond: φ_i. A ring through N–Cα
             # fixes φ (as in proline).
             rot = get(residue_phi_rotatable, resname(res), nothing)
-            rot === nothing && throw(ArgumentError(unrecognized_residue_message(i, resname(res))))
+            rot === nothing && throw(ArgumentError(unrecognized_residue_message(res)))
             push!(steps, Extend{T}((previdx[3], idxn, idxcα), idxc, norm(cα.coords - c.coords),
                                    bondangle(n, cα, c), rot, ϕs[i]))
         end
         if i == nres
             # OXT closes the carboxyl terminus; its dihedral is a final ψ.
-            oxt = backboneatom(res, "OXT", i)
+            oxt = backboneatom(res, "OXT")
             idxoxt = addatom(oxt)
             ψ′ = dihedralangle(n, cα, c, oxt)
             push!(steps, Extend{T}((idxn, idxcα, idxc), idxoxt, norm(c.coords - oxt.coords),
@@ -372,9 +377,9 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
         rname = resname(res)
         # CYX is disulfide-bonded cysteine and therefore has no thiol hydrogen.
         rname ∈ ("CYX", "NCYX", "CCYX") && haskey(res.atoms, "HG") &&
-            throw(ArgumentError("residue $i ($rname): CYX (disulfide-bonded cysteine) must not have a thiol HG"))
+            throw(ArgumentError("$(resdesc(res)): CYX (disulfide-bonded cysteine) must not have a thiol HG"))
         seq = get(residue_build_sequence, rname, nothing)
-        seq === nothing && throw(ArgumentError(unrecognized_residue_message(i, rname)))
+        seq === nothing && throw(ArgumentError(unrecognized_residue_message(res)))
         atomidx = resatomidxs[i]
         for step in seq
             if isa(step, Tuple{String,String,String,String,Bool})
@@ -385,7 +390,7 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 atomB, idxB = resolvebuildref(b, i, ress, resatomidxs)
                 atomC, idxC = resolvebuildref(c, i, ress, resatomidxs)
                 predecessors = (idxA, idxB, idxC)
-                atomD = templateatom(res, d, i)
+                atomD = templateatom(res, d)
                 ℓcd = norm(atomC.coords - atomD.coords)
                 θbcd = bondangle(atomB, atomC, atomD)
                 ϕ = dihedralangle(atomA, atomB, atomC, atomD)
@@ -394,8 +399,8 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
                 # Branch
                 a, b, c, ats = step
                 i == nres && length(ats) == 1 && only(ats) == "OXT" && continue # already added
-                atomA, atomB, atomC = templateatom(res, a, i), templateatom(res, b, i), templateatom(res, c, i)
-                atomsD = [templateatom(res, at, i) for at in ats]
+                atomA, atomB, atomC = templateatom(res, a), templateatom(res, b), templateatom(res, c)
+                atomsD = [templateatom(res, at) for at in ats]
                 predecessors = (atomidx[a], atomidx[b], atomidx[c])
                 βs = betas(SVector{3}(atomA.coords), SVector{3}(atomB.coords), SVector{3}(atomC.coords),
                            [SVector{3}(at.coords) for at in atomsD])
@@ -411,10 +416,10 @@ function bondparametrization(::Type{T}, chain::Chain) where {T<:Real}
     if aidx != natoms
         placed = Set(view(atoms, 1:aidx))
         detail = ""
-        for (i, res) in enumerate(ress)
+        for res in ress
             unplaced = sort!([name for name in keys(res.atoms) if AtomKey(res[name]) ∉ placed])
             if !isempty(unplaced)
-                detail = "; residue $i ($(resname(res))) has atom(s) " * join(unplaced, ", ") *
+                detail = "; $(resdesc(res)) has atom(s) " * join(unplaced, ", ") *
                          " that residue_build_sequence never places"
                 break
             end

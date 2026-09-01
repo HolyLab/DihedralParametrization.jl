@@ -772,7 +772,19 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             collectresidues(c)[5].number = 1000
             @test_throws ArgumentError bondparametrization(c)
             @test_throws "cannot resolve build-step reference \"+N\"" bondparametrization(c)
-            @test_throws "chain break" bondparametrization(c)
+            @test_throws "residue 1000 is not sequential with residue 4 (chain break)" bondparametrization(c)
+        end
+
+        # Messages cite the residue number from the structure, not the
+        # residue's position in the chain.
+        let c = loadchain()
+            for r in collectresidues(c)
+                r.number += 100
+            end
+            r = collectresidues(c)[12]
+            delete!(r.atoms, "N")
+            deleteat!(r.atom_list, findfirst(==("N"), r.atom_list))
+            @test_throws "residue 112 (MET): missing backbone atom \"N\"" bondparametrization(c)
         end
 
         # An atom the build tables never place.
