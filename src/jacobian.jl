@@ -10,15 +10,13 @@
 A reusable plan for the coordinate Jacobian ∂X/∂θ and related products.
 Construct one with `jacobianplan`.
 
-# Fields
-- `natoms::Int`: the number of atoms in `X` (equal to `length(bp.atoms)`).
-- `ndih::Int`: the number of rotatable dihedrals (equal to `ndihedrals(bp)`),
-  i.e. the number of Jacobian columns and the required length of `dihedrals`,
-  of `v` in `jvp!`, and of `g` in `vjp!`.
+[`natoms`](@ref) and [`ndihedrals`](@ref) report the sizes of the
+coordinate and dihedral vectors the plan expects.
 
 # Extended help
 
-The remaining fields encode the internal build-order tree.
+The fields `natoms::Int` and `ndih::Int` back those accessors; the
+remaining fields encode the internal build-order tree.
 """
 struct JacobianPlan
     natoms::Int
@@ -34,6 +32,9 @@ Base.show(io::IO, plan::JacobianPlan) = print(io, "JacobianPlan with $(plan.nato
 Base.:(==)(x::JacobianPlan, y::JacobianPlan) = _fieldsmatch(==, x, y)
 Base.isequal(x::JacobianPlan, y::JacobianPlan) = _fieldsmatch(isequal, x, y)
 Base.hash(x::JacobianPlan, h::UInt) = _hashfields(x, hash(:JacobianPlan, h))
+
+ndihedrals(plan::JacobianPlan) = plan.ndih
+natoms(plan::JacobianPlan) = plan.natoms
 
 # Name one atom of `bp` for an error message.
 _atomdesc(bp::BondParametrization, t::Int) =
@@ -111,12 +112,7 @@ function jacobianplan(bp::BondParametrization)
     nplaced == natoms ||
         throw(ArgumentError("bp.steps placed $nplaced atoms but bp.atoms has $natoms"))
 
-    ndih = length(parent)
-    expected = ndihedrals(bp)
-    ndih == expected ||
-        throw(ArgumentError("plan has $ndih dihedral columns but bp declares $expected rotatable dihedrals"))
-
-    return JacobianPlan(natoms, ndih, deepest, parent, bidx, cidx)
+    return JacobianPlan(natoms, ndihedrals(bp), deepest, parent, bidx, cidx)
 end
 
 function _axis(plan::JacobianPlan, X::AbstractVector, k::Int)

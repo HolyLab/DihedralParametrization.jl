@@ -8,7 +8,7 @@ using StaticArrays: SMatrix, SVector
 
 export BondParametrization, JacobianPlan
 export atomcoordinates, atomcoordinates!, bondparametrization, buildchain, dihedralangles, dihedralangles!,
-       dihedrallabels, ndihedrals
+       dihedrallabels, natoms, ndihedrals
 export jacobianplan, coordinatejacobian, coordinatejacobian!, vjp, vjp!, jvp, jvp!
 export weightedhessian, weightedhessian!
 

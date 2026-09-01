@@ -128,7 +128,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         steps[k] = DihedralParametrization.Extend{Float64}(
             s.predecessors, s.aidx, s.ℓcd, s.θbcd, !s.rotatable, s.ϕ)
         bpmod = BondParametrization{Float64}(
-            bp1.atoms, bp1.nres, bp1.ℓnca, bp1.ℓcac, bp1.θncac, steps, bp1.ndihedrals)
+            bp1.atoms, bp1.nres, bp1.ℓnca, bp1.ℓcac, bp1.θncac, steps, bp1.ndihedrals - 1)
         @test bpmod != bp1
         @test steps[k] != s
         @test hash(steps[k]) != hash(s)
@@ -327,8 +327,10 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
 
         # A `bp` whose steps leave an atom unplaced is rejected by both
         # traversals.
+        badsteps = bp.steps[1:end-1]
         badbp = BondParametrization{Float64}(
-            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps[1:end-1], bp.ndihedrals)
+            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, badsteps,
+            count(s -> s isa DihedralParametrization.Extend && s.rotatable, badsteps))
         @test_throws ArgumentError atomcoordinates(badbp, dihedrals, chain)
         @test_throws "atoms but bp.atoms has" atomcoordinates(badbp, dihedrals, chain)
         @test_throws ArgumentError jacobianplan(badbp)
@@ -547,6 +549,8 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
 
         plan = jacobianplan(bp)
         @test plan.ndih == length(dihedrals)
+        @test ndihedrals(plan) == ndihedrals(bp) == length(dihedrals)
+        @test natoms(plan) == natoms(bp) == length(bp.atoms)
 
         # Compare with ForwardDiff at two configurations.
         X = atomcoordinates(bp, dihedrals, (n, cα, c))
@@ -861,16 +865,11 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             @test_throws "mixed frame the analytic Jacobian cannot represent" jacobianplan(bpmixed)
         end
 
-        # A `bp` that miscounts its own rotatable steps.
-        let bpcount = BondParametrization{Float64}(
-                bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps, bp.ndihedrals + 1)
-
-            @test_throws ArgumentError dihedralangles(bpcount, X)
-            @test_throws "rotatable steps but bp declares" dihedralangles(bpcount, X)
-            @test_throws "rotatable steps but bp declares" dihedrallabels(bpcount)
-            @test_throws ArgumentError jacobianplan(bpcount)
-            @test_throws "dihedral columns but bp declares" jacobianplan(bpcount)
-        end
+        # Reject inconsistent dihedral counts.
+        @test_throws ArgumentError BondParametrization{Float64}(
+            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps, bp.ndihedrals + 1)
+        @test_throws "rotatable steps but ndihedrals" BondParametrization{Float64}(
+            bp.atoms, bp.nres, bp.ℓnca, bp.ℓcac, bp.θncac, bp.steps, bp.ndihedrals - 1)
 
         # A `bp` whose steps are not in build order.
         let steps = copy(bp.steps)

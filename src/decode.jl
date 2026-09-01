@@ -89,7 +89,7 @@ xy-plane with positive y.
 `length(dihedrals)` must equal `ndihedrals(bp)`; a `DimensionMismatch` is
 thrown otherwise. Reference coordinates whose N–Cα distance, Cα–C distance,
 or N–Cα–C angle disagrees with `bp` raise an `ArgumentError`, as does a `bp`
-whose build sequence is inconsistent with its own atom and dihedral counts.
+whose build sequence is inconsistent with its own atom count.
 `X` is a `Vector{SVector{3,R}}`, where `R` promotes the element types of
 `bp`, `dihedrals`, and the reference coordinates. This permits automatic
 differentiation types in `dihedrals`.
@@ -165,9 +165,6 @@ function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals
     end
     placed == natoms ||
         throw(ArgumentError("bp.steps placed $placed atoms but bp.atoms has $natoms"))
-    nconsumed = idx - firstindex(dihedrals) + 1
-    nconsumed == nd ||
-        throw(ArgumentError("bp.steps consumed $nconsumed dihedrals but bp declares $nd"))
     return X
 end
 """

@@ -56,7 +56,7 @@ function objective_and_grad(bp, plan, θ, frame, target)
     X = atomcoordinates(bp, θ, frame)
     w = X .- target                     # gradient of (1/2) Σ |X - target|² w.r.t. X
     val = 0.5 * sum(v -> sum(abs2, v), w)
-    g = vjp!(zeros(plan.ndih), plan, X, w)
+    g = vjp!(zeros(ndihedrals(plan)), plan, X, w)
     return val, g
 end
 

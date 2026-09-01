@@ -103,6 +103,8 @@ and `buildchain`.
   its geometry, and whether its dihedral is rotatable.
 - `ndihedrals::Int`: the number of rotatable steps, and hence the required
   length of `dihedrals`.
+
+Use [`natoms`](@ref) and [`ndihedrals`](@ref) instead of accessing fields.
 """
 struct BondParametrization{T<:Real}
     atoms::Vector{AtomKey}
@@ -112,6 +114,13 @@ struct BondParametrization{T<:Real}
     θncac::T                      # residue 1: N–Cα–C bond angle
     steps::Vector{Union{Extend{T},Branch{T}}}
     ndihedrals::Int
+
+    function BondParametrization{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndihedrals) where {T<:Real}
+        nrot = count(step -> step isa Extend && step.rotatable, steps)
+        nrot == ndihedrals ||
+            throw(ArgumentError("steps has $nrot rotatable steps but ndihedrals = $ndihedrals"))
+        return new{T}(atoms, nres, ℓnca, ℓcac, θncac, steps, ndihedrals)
+    end
 end
 
 Base.show(io::IO, bp::BondParametrization) = print(io, "BondParametrization with $(length(bp.atoms)) atoms and $(bp.nres) residues")
@@ -124,10 +133,19 @@ Base.eltype(::Type{BondParametrization{T}}) where {T} = T
 
 """
     n = ndihedrals(bp::BondParametrization)
+    n = ndihedrals(plan::JacobianPlan)
 
-Return the number of rotatable dihedrals in `bp`.
+Return the number of rotatable dihedrals.
 """
 ndihedrals(bp::BondParametrization) = bp.ndihedrals
+
+"""
+    n = natoms(bp::BondParametrization)
+    n = natoms(plan::JacobianPlan)
+
+Return the number of atoms.
+"""
+natoms(bp::BondParametrization) = length(bp.atoms)
 
 # Error for a residue absent from the build tables.
 unrecognized_residue_message(res::Residue) =
@@ -202,9 +220,6 @@ function dihedralangles!(dihedrals::AbstractVector, bp::BondParametrization, X::
     nd = ndihedrals(bp)
     length(dihedrals) == nd ||
         throw(DimensionMismatch("length(dihedrals) = $(length(dihedrals)) does not match bp's $nd rotatable dihedrals"))
-    nrot = count(step -> step isa Extend && step.rotatable, bp.steps)
-    nrot == nd ||
-        throw(ArgumentError("bp.steps has $nrot rotatable steps but bp declares $nd"))
     k = firstindex(dihedrals) - 1
     for step in bp.steps
         (step isa Extend && step.rotatable) || continue
@@ -300,8 +315,6 @@ function dihedrallabels(bp::BondParametrization)
         a, b, c, d = bp.atoms[ia], bp.atoms[ib], bp.atoms[ic], bp.atoms[step.aidx]
         labels[k+=1] = DihedralLabel(c.resnum, backbonename(a, b, c, d), (a, b, c, d))
     end
-    k == ndihedrals(bp) ||
-        throw(ArgumentError("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))"))
     return labels
 end
 
