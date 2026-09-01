@@ -5,13 +5,16 @@
 #   ∂X[t]/∂θ_k = u_k × (X[t] - p_k),   u_k = (X[c_k]-X[b_k])/‖X[c_k]-X[b_k]‖,  p_k = X[c_k]
 
 """
-    plan::JacobianPlan
+    JacobianPlan
 
 A reusable plan for the coordinate Jacobian ∂X/∂θ and related products.
 Construct one with `jacobianplan`.
 
 [`natoms`](@ref) and [`ndihedrals`](@ref) report the sizes of the
 coordinate and dihedral vectors the plan expects.
+
+Numeric arrays passed to the derivative routines must use conventional
+one-based axes.
 
 # Extended help
 
@@ -177,7 +180,7 @@ end
 
 Compute ∂X/∂θ as a dense `3 * length(X) × plan.ndih` matrix. The rows for
 atom `t` are `3(t-1)+1:3t`. `X` must have been produced from the same bond
-parametrization as `plan`.
+parametrization as `plan` and have `natoms(plan)` entries.
 
 A coordinate list `Y::Vector{SVector{3,T}}` corresponds to the flat vector
 `reinterpret(T, Y)`, so `J * v` matches `reinterpret(T, jvp(plan, X, v))`
@@ -224,6 +227,9 @@ coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:A
 
 Compute `g = J' * w` without forming `J`, where `J = ∂X/∂θ`. `w[t]` is the
 weight for atom `t`. Returns `g`.
+
+`X` and `w` must have `natoms(plan)` entries and `g` must have
+`ndihedrals(plan)` entries.
 
 `workspace` is a [`JacobianWorkspace`](@ref) whose element type is the
 promoted element type of `X` and `w`; without it, one is allocated per

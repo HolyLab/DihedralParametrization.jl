@@ -1,3 +1,13 @@
+"""
+Represent protein chains by their rotatable-bond dihedral angles. Use
+`bondparametrization` to construct the representation, `atomcoordinates` and
+`dihedralangles` to convert between coordinates and angles, and
+`jacobianplan` for derivatives with respect to the angles.
+
+Numeric arrays representing coordinate lists, dihedrals, or derivatives must
+use conventional one-based axes. Residue vectors and individual coordinate
+vectors may use arbitrary axes.
+"""
 module DihedralParametrization
 
 using BioStructures: AbstractAtom, AbstractResidue, Chain, atomname, atomnames, bondangle,

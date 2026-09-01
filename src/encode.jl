@@ -2,7 +2,8 @@
     AtomKey
 
 Identifies one atom of a `BondParametrization` by residue number and atom
-name.
+name. `AtomKey(atom::BioStructures.AbstractAtom)` builds the key for `atom`;
+an insertion code on its residue throws an `ArgumentError`.
 
 # Fields
 - `resnum::Int`: the residue number from the source structure (as returned by
@@ -247,8 +248,8 @@ inverse of `atomcoordinates`; `dihedrallabels` names the entries. Angles lie
 in `-π` to `π`.
 
 `X` holds one coordinate per entry of `bp.atoms`, as `atomcoordinates`
-returns; a `DimensionMismatch` is thrown if its length differs. Other
-3-vector types are converted to `SVector{3}`. The `Chain` and residue-vector
+returns, and must be one-based. Other 3-vector types are converted to
+`SVector{3}`. The `Chain` and residue-vector
 methods take the coordinates from the chain's, or the given, residues,
 matched through `bp.atoms`, and throw an `ArgumentError` if their atom
 count differs from `bp`'s or if an atom named in `bp.atoms` is absent.

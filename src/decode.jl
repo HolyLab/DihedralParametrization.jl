@@ -86,9 +86,9 @@ BioStructures atoms, or a `Chain` or vector of residues whose first residue
 supplies the atoms. The two-argument form places residue 1's N at the
 origin, Cα on the positive x-axis, and C in the xy-plane with positive y.
 
-`length(dihedrals)` must equal `ndihedrals(bp)`. The reference geometry must
-match `bp`; `rtol` and `atol` control its `isapprox` checks. For coordinates
-read from a three-decimal PDB or mmCIF file, try `atol = 1e-3`.
+`dihedrals` must be one-based with `ndihedrals(bp)` entries. The reference
+geometry must match `bp`; `rtol` and `atol` control its `isapprox` checks. For
+coordinates read from a three-decimal PDB or mmCIF file, try `atol = 1e-3`.
 `X` is a `Vector{SVector{3,R}}`, where `R` promotes the element types of
 `bp`, `dihedrals`, and the reference coordinates. This permits automatic
 differentiation types in `dihedrals`.
