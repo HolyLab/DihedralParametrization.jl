@@ -8,12 +8,9 @@ using ForwardDiff
 using Random
 using Test
 
-const testad = Base.VERSION.major == 1 && Base.VERSION.minor == 10
-if testad
-    using DifferentiationInterface
-    using Mooncake: Mooncake
-    using FiniteDifferences: central_fdm
-end
+using DifferentiationInterface
+using Mooncake: Mooncake
+using FiniteDifferences: central_fdm
 
 # Residue `resnum`'s own φ is the dihedral of the `Extend` step that places its C.
 function rotatablephi(bp, resnum)
@@ -46,7 +43,7 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
             drc = DihedralParametrization.snnerf(a, b, c, ℓ, θ, ϕ)
             @test isapprox(drc, dgt; atol=1e-8)
             βs = DihedralParametrization.betas(a, b, c, [dgt])
-            drc = only(DihedralParametrization.add_to_middle(a, b, c, βs))
+            drc = only(DihedralParametrization.add_to_middle!([zero(a)], 1, a, b, c, βs))
             @test isapprox(drc, dgt; atol=1e-8)
         end
     end
@@ -997,30 +994,28 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         end
     end
 
-    if testad
-        @testset "Differentiability" begin
-            function makef(chain)  # Keep inference check self-contained.
-                bp, dihedrals = bondparametrization(chain)
-                return function(dih)
-                    return atomcoordinates(bp, dih, chain)
-                end, length(dihedrals)
-            end
-
-            path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
-            struc = read(path, MMCIFFormat)
-            specializeresnames!(struc)
-            A = only(only(struc))
-
-            makeX, n = makef(A)
-            dih = 2π * (rand(n) .- 0.5)
-            X = makeX(dih)
-            backend = DifferentiationInterface.AutoMooncakeForward(; config=nothing)
-            J = jacobian(makeX, backend, dih)
-            Jmc = [SVector(j.fields.data) for j in J]
-            backend = AutoFiniteDifferences(; fdm=central_fdm(5, 1))
-            J = jacobian(makeX, backend, dih)
-            Jfd = reinterpret(SVector{3,Float64}, J)
-            @test Jmc ≈ Jfd atol=1e-6
+    @testset "Differentiability" begin
+        function makef(chain)  # Keep inference check self-contained.
+            bp, dihedrals = bondparametrization(chain)
+            return function(dih)
+                return atomcoordinates(bp, dih, chain)
+            end, length(dihedrals)
         end
+
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        A = only(only(struc))
+
+        makeX, n = makef(A)
+        dih = 2π * (rand(n) .- 0.5)
+        X = makeX(dih)
+        backend = DifferentiationInterface.AutoMooncakeForward(; config=nothing)
+        J = jacobian(makeX, backend, dih)
+        Jmc = [SVector(j.fields.data) for j in J]
+        backend = AutoFiniteDifferences(; fdm=central_fdm(5, 1))
+        J = jacobian(makeX, backend, dih)
+        Jfd = reinterpret(SVector{3,Float64}, J)
+        @test Jmc ≈ Jfd atol=1e-6
     end
 end

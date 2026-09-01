@@ -503,7 +503,7 @@ end
 bondparametrization(chain::Chain) = bondparametrization(Float64, chain)
 
 function betas(a::AbstractVector{T}, b::AbstractVector{T}, c::AbstractVector{T}, ds) where T<:Real
-    # The mirror image of add_to_middle
+    # The mirror image of add_to_middle!
     ab = b - a
     ab = ab / norm(ab)
     cb = b - c

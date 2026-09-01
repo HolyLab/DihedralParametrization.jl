@@ -1,9 +1,9 @@
 module DihedralParametrization
 
 using BioStructures: AbstractAtom, AbstractResidue, Chain, atomname, atomnames, bondangle,
-                     chain, collectatoms, collectresidues, coords, coords!, dihedralangle,
-                     inscode, omegaangles, phiangles, psiangles, resid, residue, resname,
-                     resnumber, sequentialresidues
+                     collectatoms, collectresidues, coords, coords!, dihedralangle, inscode,
+                     omegaangles, phiangles, psiangles, resid, residue, resname, resnumber,
+                     sequentialresidues
 using LinearAlgebra: cross, dot, norm
 using StaticArrays: SMatrix, SVector
 

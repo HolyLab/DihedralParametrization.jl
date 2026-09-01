@@ -47,9 +47,6 @@ function add_to_middle!(X, aidx::Int, a::AbstractVector, b::AbstractVector, c::A
     return X
 end
 
-add_to_middle(a::AbstractVector, b::AbstractVector, c::AbstractVector, βs) =
-    add_to_middle!(Vector{promote_type(typeof(a), typeof(b), typeof(c))}(undef, length(βs)), 1, a, b, c, βs)
-
 # Convert a reference frame to a homogeneous tuple of static 3-vectors.
 frametuple(frame::NTuple{3,SVector{3,T}}) where {T<:Real} = frame
 function frametuple((n, cα, c)::NTuple{3,AbstractVector})
