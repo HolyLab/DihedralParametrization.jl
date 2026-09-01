@@ -52,10 +52,11 @@ the same number of dihedrals.
 
 This uses `vjp!` to differentiate a squared-distance objective:
 
-```julia
+```jldoctest gradient
 using DihedralParametrization, BioStructures
 
-struc = read("AF-M3YHX5-F1-model_v4_hydrogens.cif", MMCIFFormat)
+path = joinpath(pkgdir(DihedralParametrization), "test", "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+struc = read(path, MMCIFFormat)
 specializeresnames!(struc)
 chain = struc["A"]
 bp, dihedrals = bondparametrization(chain)
@@ -73,9 +74,32 @@ end
 
 target = atomcoordinates(bp, dihedrals, frame)  # a structure to match
 val, g = objective_and_grad(bp, plan, dihedrals, frame, target)
+val, iszero(g)
+
+# output
+
+(0.0, true)
 ```
 
-`g` is the gradient of `val` with respect to `dihedrals`.
+`g` is the gradient of `val` with respect to `dihedrals`. At the target,
+both are zero.
+
+The objective's Hessian is the Gauss–Newton term `J' * J` plus the
+second-derivative term from `weightedhessian`:
+
+```jldoctest gradient
+X = atomcoordinates(bp, dihedrals .+ 0.1, frame)   # away from the target
+w = X .- target
+J = coordinatejacobian(plan, X)
+H = J' * J + weightedhessian(plan, X, w)
+size(H) == (ndihedrals(plan), ndihedrals(plan)), H == H'
+
+# output
+
+(true, true)
+```
+
+Without `weightedhessian`, `J' * J` is the Gauss–Newton approximation.
 
 ## AD interop
 
@@ -114,9 +138,6 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   corresponding flat vector of length `3*natoms`, and
   `reinterpret(reshape, T, X)` is the same data as a `3 × natoms` matrix.
   Other 3-vector types are converted to `SVector{3,T}` on entry.
-  Coordinate, weight, dihedral, and Jacobian arrays must use one-based
-  indexing. Views and other one-based `AbstractArray`s are accepted; offset
-  arrays throw an `ArgumentError`.
 
   A per-atom cotangent `w::Vector{SVector{3,T}}` flattens the same way, so
 

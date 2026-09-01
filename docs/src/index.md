@@ -56,12 +56,12 @@ cannot otherwise describe.
 
 This example uses an AlphaFold structure from `test/data` with hydrogens.
 
-```julia
+```jldoctest demo
 julia> using DihedralParametrization, BioStructures
 
-julia> cd(joinpath(pkgdir(DihedralParametrization), "test", "data"))
+julia> path = joinpath(pkgdir(DihedralParametrization), "test", "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif");
 
-julia> struc = read("AF-M3YHX5-F1-model_v4_hydrogens.cif", MMCIFFormat)
+julia> struc = read(path, MMCIFFormat)
 MolecularStructure AF-M3YHX5-F1-model_v4_hydrogens.cif with 1 models, 1 chains (A), 112 residues, 1833 atoms
 
 julia> specializeresnames!(struc)
@@ -88,13 +88,13 @@ stores the rotatable dihedral angles, in radians.
 Pass a different vector with entries from `-π` to `π` to generate another
 configuration:
 
-```julia
+```jldoctest demo
 julia> randdh = 2π * (rand(length(dihedrals)) .- 0.5);
 
 julia> X = atomcoordinates(bp, randdh, A);
 
 julia> summary(X)
-"1833-element Vector{SVector{3, Float64}}"
+"1833-element Vector{StaticArraysCore.SVector{3, Float64}}"
 
 julia> B = buildchain(A, bp, X)
 Chain A with 112 residues, 0 other molecules, 1833 atoms
