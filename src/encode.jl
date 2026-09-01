@@ -140,7 +140,8 @@ end
 Measure the rotatable dihedral angles (in radians) of a configuration, the
 inverse of `atomcoordinates`. The entries are in the same order
 `atomcoordinates` consumes them, one per rotatable step of `bp.steps`, so
-`length(dihedrals) == ndihedrals(bp)`. Angles lie in `-π` to `π`.
+`length(dihedrals) == ndihedrals(bp)`; `dihedrallabels` names the entries.
+Angles lie in `-π` to `π`.
 
 `X` holds one coordinate per entry of `bp.atoms`, as `atomcoordinates`
 returns; a `DimensionMismatch` is thrown if its length differs. The `Chain`
@@ -192,6 +193,80 @@ function chaincoordinates(bp::BondParametrization, chain::Chain)
 end
 
 """
+    DihedralLabel
+
+Names one entry of a rotatable-dihedral vector by the atoms that define it.
+See `dihedrallabels`.
+
+# Fields
+- `resnum::Int`: the residue number (an `AtomData.ridx`) of the axis atoms
+  `b` and `c`.
+- `name::Union{Nothing,Symbol}`: `:ψ` or `:φ` for a backbone dihedral,
+  `nothing` for every other rotation.
+- `atoms::NTuple{4,AtomData}`: the atoms `a`, `b`, `c`, `d` of the dihedral
+  `a–b–c–d`. The rotation is about the `b–c` bond, and `d` is the atom that
+  the corresponding build step places.
+
+Side-chain rotations are left unnamed because the build tables define them
+from reference atoms that need not be the IUPAC χ reference atoms: lysine's
+rotation about the Cα–Cβ bond, for instance, is measured here as
+C–Cα–Cβ–Cγ rather than the IUPAC N–Cα–Cβ–Cγ, so a `:χ1` label would misstate
+the value. The `atoms` field defines the angle exactly.
+"""
+struct DihedralLabel
+    resnum::Int
+    name::Union{Nothing,Symbol}
+    atoms::NTuple{4,AtomData}
+end
+
+function Base.show(io::IO, label::DihedralLabel)
+    print(io, "DihedralLabel(", label.resnum, ", ", repr(label.name), ", ")
+    join(io, ("$(a.aname)($(a.ridx))" for a in label.atoms), "-")
+    print(io, ")")
+end
+
+# `:ψ` rotates about a Cα–C bond and places the next residue's N, or the
+# carboxyl terminus's OXT; `:φ` rotates about an N–Cα bond and places that
+# residue's own C. Every other rotation is unnamed.
+function backbonename(a::AtomData, b::AtomData, c::AtomData, d::AtomData)
+    anames = (a.aname, b.aname, c.aname, d.aname)
+    if anames == (:N, :CA, :C, :N) && d.ridx != c.ridx
+        return :ψ
+    elseif anames == (:N, :CA, :C, :OXT)
+        return :ψ
+    elseif anames == (:C, :N, :CA, :C) && a.ridx != b.ridx
+        return :φ
+    end
+    return nothing
+end
+
+"""
+    labels = dihedrallabels(bp::BondParametrization)
+
+Name the rotatable dihedrals of `bp`, one `DihedralLabel` per entry of a
+`dihedrals` vector and hence per column of the coordinate Jacobian. The
+result has length `ndihedrals(bp)` and follows the same order as
+`dihedralangles`.
+
+Backbone dihedrals are named `:ψ` and `:φ`; side-chain dihedrals are
+unnamed, and a label's `atoms` field is what defines the angle. Labels are
+distinct from one another and can be used as dictionary keys.
+"""
+function dihedrallabels(bp::BondParametrization)
+    labels = Vector{DihedralLabel}(undef, ndihedrals(bp))
+    k = 0
+    for step in bp.steps
+        (step isa Extend && step.rotatable) || continue
+        ia, ib, ic = step.predecessors
+        a, b, c, d = bp.atoms[ia], bp.atoms[ib], bp.atoms[ic], bp.atoms[step.aidx]
+        labels[k+=1] = DihedralLabel(c.ridx, backbonename(a, b, c, d), (a, b, c, d))
+    end
+    k == ndihedrals(bp) ||
+        error("bp.steps has $k rotatable steps but bp declares $(ndihedrals(bp))")
+    return labels
+end
+
+"""
     bp, dihedrals = bondparametrization(chain)
     bp, dihedrals = bondparametrization(T, chain)
 
@@ -200,9 +275,9 @@ Represent a protein `chain` by fixed bond parameters `bp` and its rotatable
 
 `dihedrals` is a vector representing the rotatable dihedral angles (in
 radians) in the chain, in the order documented in [Conventions](@ref);
-`ndihedrals` gives its length. It is what `dihedralangles(bp, chain)`
-measures. `bp` is a `BondParametrization` object containing all other
-necessary information.
+`ndihedrals` gives its length, `dihedrallabels` names its entries, and it is
+what `dihedralangles(bp, chain)` measures. `bp` is a `BondParametrization`
+object containing all other necessary information.
 
 The first form stores `bp`'s bond lengths, bond angles, and fixed dihedrals
 (and returns `dihedrals`) as `Float64`; pass a type explicitly, e.g.

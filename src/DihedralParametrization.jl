@@ -6,9 +6,11 @@ using BioStructures: Atom, Chain, Residue, atomname, bondangle, chain, collectat
 using LinearAlgebra: cross, dot, norm
 using StaticArrays: SMatrix, SVector
 
-export atomcoordinates, bondparametrization, buildchain, dihedralangles
+export atomcoordinates, bondparametrization, buildchain, dihedralangles, dihedrallabels
 export jacobianplan, coordinatejacobian, coordinatejacobian!, vjp, vjp!, jvp, jvp!
 export weightedhessian, weightedhessian!
+
+VERSION >= v"1.11" && eval(Meta.parse("public DihedralLabel"))
 
 include("tables.jl")
 include("encode.jl")

@@ -135,6 +135,16 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
      single-bond rotation that is not conventionally numbered as a χ angle,
      such as a terminal methyl's orientation).
 
+  [`dihedrallabels`](@ref) returns this ordering as data: one
+  [`DihedralLabel`](@ref) per entry of `dihedrals`, and hence per column of
+  `J`. Each label carries the residue number of the rotation axis, the name
+  `:ψ` or `:φ` for a backbone dihedral (`nothing` otherwise), and the four
+  `AtomData` values `a`, `b`, `c`, `d` of the dihedral `a–b–c–d`. Side-chain
+  dihedrals are unnamed because the build tables define them from reference
+  atoms that need not be the IUPAC χ reference atoms — lysine's rotation
+  about Cα–Cβ is measured here as C–Cα–Cβ–Cγ rather than N–Cα–Cβ–Cγ — so the
+  four atoms, not a χ number, are what pin down the angle.
+
 - **Fixed vs. rotatable dihedrals.** A step whose `rotatable` field is
   `false`, and every `Branch` step, uses geometry stored in `bp` rather than
   an entry of `dihedrals`. Three kinds of dihedral angle are fixed this way:

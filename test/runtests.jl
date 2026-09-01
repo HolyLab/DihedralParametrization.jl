@@ -119,6 +119,56 @@ issidechain(bp, step) = bp.atoms[step.aidx].aname ∉ (:N, :CA, :C, :OXT)
         @test_throws "chain has no atom N in residue 5" dihedralangles(bp, chainmoved)
     end
 
+    @testset "dihedrallabels" begin
+        path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+        struc = read(path, MMCIFFormat)
+        specializeresnames!(struc)
+        chain = only(only(struc))
+        ress = collectresidues(chain)
+        nres = length(ress)
+        bp, dihedrals = bondparametrization(chain)
+        labels = dihedrallabels(bp)
+
+        @test length(labels) == DihedralParametrization.ndihedrals(bp)
+        @test axes(labels) == axes(dihedrals)
+
+        # The first dihedral is residue 1's psi.
+        AtomData = DihedralParametrization.AtomData
+        @test labels[1] == DihedralParametrization.DihedralLabel(
+            1, :ψ, (AtomData(1, :N), AtomData(1, :CA), AtomData(1, :C), AtomData(2, :N)))
+        @test occursin("N(1)-CA(1)-C(1)-N(2)", sprint(show, labels[1]))
+
+        # One psi per residue: nres-1 peptide psis plus the terminal OXT.
+        @test count(l -> l.name === :ψ, labels) == nres
+        @test count(l -> l.name === :φ, labels) ==
+              count(i -> rotatablephi(bp, resnumber(ress[i])), 2:nres)
+
+        # Only the steps placing a backbone N, C, or OXT are named.
+        @test all(l -> (l.name === nothing) == (l.atoms[4].aname ∉ (:N, :C, :OXT)), labels)
+
+        # A ring-constrained phi contributes no label.
+        prolinenums = [resnumber(r) for r in ress if resname(r) in ("PRO", "NPRO", "CPRO")]
+        @test !isempty(prolinenums)
+        @test !any(l -> l.name === :φ && l.resnum in prolinenums, labels)
+
+        # Lysine's rotation about Cα–Cβ is measured from C, not from N.
+        lysnum = resnumber(first(filter(r -> resname(r) in ("LYS", "NLYS", "CLYS"), ress)))
+        chi1 = only(filter(l -> l.resnum == lysnum && l.atoms[4].aname === :CG, labels))
+        @test chi1.name === nothing
+        @test chi1.atoms == (AtomData(lysnum, :C), AtomData(lysnum, :CA),
+                             AtomData(lysnum, :CB), AtomData(lysnum, :CG))
+
+        # Labels are distinct and hashable.
+        @test length(unique(labels)) == length(labels)
+        bydihedral = Dict(labels .=> dihedrals)
+        @test length(bydihedral) == length(labels)
+        @test bydihedral[labels[7]] == dihedrals[7]
+
+        # The labels depend only on the build sequence, not the element type.
+        bp32, _ = bondparametrization(Float32, chain)
+        @test dihedrallabels(bp32) == labels
+    end
+
     @testset "Element types, inference, and corrupt parametrizations" begin
         path = joinpath(@__DIR__, "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
         struc = read(path, MMCIFFormat)
