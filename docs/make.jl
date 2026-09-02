@@ -9,7 +9,7 @@ makedocs(;
     sitename="DihedralParametrization.jl",
     checkdocs=:public,
     format=Documenter.HTML(;
-        canonical="https://HolyLab.github.io/DihedralParametrization.jl",
+        canonical="https://JuliaStructBio.github.io/DihedralParametrization.jl",
         edit_link="main",
         assets=String[],
     ),
@@ -21,6 +21,6 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/HolyLab/DihedralParametrization.jl",
+    repo="github.com/JuliaStructBio/DihedralParametrization.jl",
     devbranch="main",
 )
