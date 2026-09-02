@@ -15,10 +15,12 @@ If you are only interested in the backbone degrees of freedom, see [Backboner](h
 ## Installation
 
 ```
-pkg> add https://github.com/HolyLab/DihedralParametrization.jl
+pkg> add DihedralParametrization
 ```
 
 ## Demo
+
+This demo takes an input structure and randomizes the dihedral angles, producing an unfolded protein:
 
 ```julia
 julia> using DihedralParametrization, BioStructures
