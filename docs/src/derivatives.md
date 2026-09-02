@@ -52,10 +52,11 @@ the same number of dihedrals.
 
 This uses `vjp!` to differentiate a squared-distance objective:
 
-```julia
+```jldoctest gradient
 using DihedralParametrization, BioStructures
 
-struc = read("AF-M3YHX5-F1-model_v4_hydrogens.cif", MMCIFFormat)
+path = joinpath(pkgdir(DihedralParametrization), "test", "data", "AF-M3YHX5-F1-model_v4_hydrogens.cif")
+struc = read(path, MMCIFFormat)
 specializeresnames!(struc)
 chain = struc["A"]
 bp, dihedrals = bondparametrization(chain)
@@ -73,9 +74,32 @@ end
 
 target = atomcoordinates(bp, dihedrals, frame)  # a structure to match
 val, g = objective_and_grad(bp, plan, dihedrals, frame, target)
+val, iszero(g)
+
+# output
+
+(0.0, true)
 ```
 
-`g` is the gradient of `val` with respect to `dihedrals`.
+`g` is the gradient of `val` with respect to `dihedrals`. At the target,
+both are zero.
+
+The objective's Hessian is the Gauss–Newton term `J' * J` plus the
+second-derivative term from `weightedhessian`:
+
+```jldoctest gradient
+X = atomcoordinates(bp, dihedrals .+ 0.1, frame)   # away from the target
+w = X .- target
+J = coordinatejacobian(plan, X)
+H = J' * J + weightedhessian(plan, X, w)
+size(H) == (ndihedrals(plan), ndihedrals(plan)), H == H'
+
+# output
+
+(true, true)
+```
+
+Without `weightedhessian`, `J' * J` is the Gauss–Newton approximation.
 
 ## AD interop
 

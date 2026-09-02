@@ -1,6 +1,8 @@
 [deps]
+BioStructures = "de9282ab-8554-53be-b2d6-f6c222edabfc"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 DihedralParametrization = "750fe09c-d507-4c3d-8cfa-192ca0812517"
 
 [compat]
+BioStructures = "4.7"
 Documenter = "1"
