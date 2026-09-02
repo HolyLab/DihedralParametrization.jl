@@ -11,15 +11,15 @@ vectors may use arbitrary axes.
 module DihedralParametrization
 
 using BioStructures: AbstractAtom, AbstractResidue, Chain, atomname, atomnames, bondangle,
-                     collectatoms, collectresidues, coords, coords!, dihedralangle, inscode,
-                     omegaangles, phiangles, psiangles, resid, residue, resname, resnumber,
-                     sequentialresidues
+    collectatoms, collectresidues, coords, coords!, dihedralangle, inscode,
+    omegaangles, phiangles, psiangles, resid, residue, resname, resnumber,
+    sequentialresidues
 using LinearAlgebra: cross, dot, norm
 using StaticArrays: SMatrix, SVector
 
 export BondParametrization, JacobianPlan, JacobianWorkspace
 export atomcoordinates, atomcoordinates!, bondparametrization, buildchain, dihedralangles, dihedralangles!,
-       dihedrallabels, natoms, ndihedrals
+    dihedrallabels, natoms, ndihedrals
 export jacobianplan, coordinatejacobian, coordinatejacobian!, vjp, vjp!, jvp, jvp!
 export weightedhessian, weightedhessian!
 
