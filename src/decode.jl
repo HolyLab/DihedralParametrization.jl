@@ -9,18 +9,24 @@ and dihedral angle using the SN-NeRF algorithm. Angles are in radians.
 > Parsons, Jerod, et al. "Practical conversion from torsion space to Cartesian
 > space for in silico protein synthesis." Journal of computational chemistry 26.10 (2005): 1063-1068.
 """
-function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
-                ℓcd::Real, θbcd::Real, ϕbc::Real)
+function snnerf(
+        a::AbstractVector, b::AbstractVector, c::AbstractVector,
+        ℓcd::Real, θbcd::Real, ϕbc::Real
+    )
     return snnerf(a, b, c, ℓcd, sincos(θbcd), sincos(ϕbc))
 end
 
-function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
-                ℓcd::Real, θbcd::Real, (sϕ, cϕ)::Tuple{Real,Real})
+function snnerf(
+        a::AbstractVector, b::AbstractVector, c::AbstractVector,
+        ℓcd::Real, θbcd::Real, (sϕ, cϕ)::Tuple{Real, Real}
+    )
     return snnerf(a, b, c, ℓcd, sincos(θbcd), (sϕ, cϕ))
 end
 
-function snnerf(a::AbstractVector, b::AbstractVector, c::AbstractVector,
-                ℓcd::Real, (sθ, cθ)::Tuple{Real,Real}, (sϕ, cϕ)::Tuple{Real,Real})
+function snnerf(
+        a::AbstractVector, b::AbstractVector, c::AbstractVector,
+        ℓcd::Real, (sθ, cθ)::Tuple{Real, Real}, (sϕ, cϕ)::Tuple{Real, Real}
+    )
     bc = c - b
     bc = bc / norm(bc)
     ab = b - a
@@ -48,12 +54,12 @@ function add_to_middle!(X, aidx::Int, a::AbstractVector, b::AbstractVector, c::A
 end
 
 # Convert a reference frame to a homogeneous tuple of static 3-vectors.
-frametuple(frame::NTuple{3,SVector{3,T}}) where {T<:Real} = frame
-function frametuple((n, cα, c)::NTuple{3,AbstractVector})
+frametuple(frame::NTuple{3, SVector{3, T}}) where {T <: Real} = frame
+function frametuple((n, cα, c)::NTuple{3, AbstractVector})
     T = promote_type(eltype(n), eltype(cα), eltype(c))
-    return (SVector{3,T}(n), SVector{3,T}(cα), SVector{3,T}(c))
+    return (SVector{3, T}(n), SVector{3, T}(cα), SVector{3, T}(c))
 end
-frametuple(frame::NTuple{3,AbstractAtom}) = frametuple(map(coords, frame))
+frametuple(frame::NTuple{3, AbstractAtom}) = frametuple(map(coords, frame))
 frametuple(chain::Chain) = frametuple(first(chain)::AbstractResidue)
 function frametuple(ress::AbstractVector{<:AbstractResidue})
     isempty(ress) && throw(ArgumentError("no residues to supply a reference frame"))
@@ -65,9 +71,9 @@ frametuple(nter::AbstractResidue) = frametuple((nter["N"]::AbstractAtom, nter["C
 # C in the xy-plane with positive y.
 function canonicalframe(bp::BondParametrization{T}) where {T}
     sθ, cθ = sincos(bp.θncac)
-    n = zero(SVector{3,T})
-    cα = SVector{3,T}(bp.ℓnca, zero(T), zero(T))
-    c = SVector{3,T}(bp.ℓnca - bp.ℓcac * cθ, bp.ℓcac * sθ, zero(T))
+    n = zero(SVector{3, T})
+    cα = SVector{3, T}(bp.ℓnca, zero(T), zero(T))
+    c = SVector{3, T}(bp.ℓnca - bp.ℓcac * cθ, bp.ℓcac * sθ, zero(T))
     return (n, cα, c)
 end
 
@@ -102,10 +108,10 @@ element type. A tuple of atoms contributes each atom's `coords` (for a
 `DisorderedAtom`, its default alternate location); the `Chain` and
 residue-vector methods use the first residue's N, CA, and C atoms.
 """
-function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame; rtol=nothing, atol=0)
+function atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector, frame; rtol = nothing, atol = 0)
     n, cα, c = frametuple(frame)
     R = promote_type(eltype(bp), eltype(dihedrals), eltype(n))
-    X = Vector{SVector{3,R}}(undef, length(bp.atoms))
+    X = Vector{SVector{3, R}}(undef, length(bp.atoms))
     return _atomcoordinates!(X, bp, dihedrals, n, cα, c; rtol, atol)
 end
 atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector) =
@@ -120,7 +126,7 @@ atomcoordinates(bp::BondParametrization, dihedrals::AbstractVector) =
 Write [`atomcoordinates`](@ref) into `X` and return it. `X` must contain
 `length(bp.atoms)` 3-vectors. Coordinates are converted to `eltype(X)`.
 """
-atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector, frame; rtol=nothing, atol=0) =
+atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector, frame; rtol = nothing, atol = 0) =
     _atomcoordinates!(X, bp, dihedrals, frametuple(frame)...; rtol, atol)
 atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector) =
     atomcoordinates!(X, bp, dihedrals, canonicalframe(bp))
@@ -130,9 +136,11 @@ atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::Abstract
 frameapprox(x, y, ::Nothing, atol) = isapprox(x, y; atol)
 frameapprox(x, y, rtol, atol) = isapprox(x, y; rtol, atol)
 
-function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector,
-                           n::SVector{3,Tref}, cα::SVector{3,Tref}, c::SVector{3,Tref};
-                           rtol=nothing, atol=0) where {Tref<:Real}
+function _atomcoordinates!(
+        X::AbstractVector, bp::BondParametrization, dihedrals::AbstractVector,
+        n::SVector{3, Tref}, cα::SVector{3, Tref}, c::SVector{3, Tref};
+        rtol = nothing, atol = 0
+    ) where {Tref <: Real}
     Base.require_one_based_indexing(X, dihedrals)
     # Check that the inputs are consistent with `bp`
     nd = ndihedrals(bp)
@@ -163,7 +171,7 @@ function _atomcoordinates!(X::AbstractVector, bp::BondParametrization, dihedrals
             throw(ArgumentError("bp.steps places atom $(placed + nplaced) but bp.atoms has $natoms"))
         a, b, cc = X[SVector(step.predecessors)]
         if step isa Extend
-            ϕ = step.rotatable ? convert(R, dihedrals[idx+=1]) : convert(R, step.ϕ)
+            ϕ = step.rotatable ? convert(R, dihedrals[idx += 1]) : convert(R, step.ϕ)
             X[step.aidx] = snnerf(a, b, cc, step.ℓcd, step.θbcd, ϕ)
         else
             add_to_middle!(X, step.aidx, a, b, cc, step.βs)

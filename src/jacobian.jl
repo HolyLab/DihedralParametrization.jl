@@ -44,26 +44,36 @@ _atomdesc(bp::BondParametrization, t::Int) =
     (a = bp.atoms[t]; "residue $(a.resnum) $(a.aname)")
 
 # Describe a build step for an error message.
-_stepdesc(bp::BondParametrization, aidx::Int, predecessors::Tuple{Int,Int,Int}) =
+_stepdesc(bp::BondParametrization, aidx::Int, predecessors::Tuple{Int, Int, Int}) =
     "placing $(_atomdesc(bp, aidx)) from " *
     join((_atomdesc(bp, p) for p in predecessors), ", ")
 
 # Return the deepest dihedral moving the frame, checking that its movesets
 # are nested and that omitted dihedrals rotate about a frame atom. The
 # description of the offending step is built only when an error is raised.
-function _framedeepest(deepest::Vector{Int}, parent::Vector{Int}, bidx::Vector{Int}, cidx::Vector{Int},
-                       a::Int, b::Int, c::Int, bp::BondParametrization, aidx::Int)
+function _framedeepest(
+        deepest::Vector{Int}, parent::Vector{Int}, bidx::Vector{Int}, cidx::Vector{Int},
+        a::Int, b::Int, c::Int, bp::BondParametrization, aidx::Int
+    )
     da, db, dc = deepest[a], deepest[b], deepest[c]
     dmax = max(da, db, dc)
     dmax == 0 && return 0
     for (p, dp) in ((a, da), (b, db), (c, dc))
         k = dmax
         while k != dp
-            k == 0 && throw(ArgumentError("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
-                                          "(atom $p's moveset is not nested with dihedral $dmax's chain)"))
+            k == 0 && throw(
+                ArgumentError(
+                    "$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+                        "(atom $p's moveset is not nested with dihedral $dmax's chain)"
+                )
+            )
             if p != bidx[k] && p != cidx[k]
-                throw(ArgumentError("$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
-                                    "(atom $p lacks dihedral $k in its moveset but is not one of $k's axis atoms)"))
+                throw(
+                    ArgumentError(
+                        "$(_stepdesc(bp, aidx, (a, b, c))): coordinate map has a mixed frame the analytic Jacobian cannot represent " *
+                            "(atom $p lacks dihedral $k in its moveset but is not one of $k's axis atoms)"
+                    )
+                )
             end
             k = parent[k]
         end
@@ -145,20 +155,22 @@ struct JacobianWorkspace{T}
     # One entry per dihedral. `vjp!` uses S0 and S1 as accumulators of
     # Σw and Σx×w; `jvp!` uses them for the cumulative rotation Ω and
     # translation τ; `weightedhessian!` uses all five.
-    S0::Vector{SVector{3,T}}
-    S1::Vector{SVector{3,T}}
-    p::Vector{SVector{3,T}}
+    S0::Vector{SVector{3, T}}
+    S1::Vector{SVector{3, T}}
+    p::Vector{SVector{3, T}}
     s::Vector{T}
-    M::Vector{SMatrix{3,3,T,9}}
+    M::Vector{SMatrix{3, 3, T, 9}}
 end
 
 function JacobianWorkspace{T}(plan::JacobianPlan) where {T}
     n = ndihedrals(plan)
-    return JacobianWorkspace{T}(Vector{SVector{3,T}}(undef, n), Vector{SVector{3,T}}(undef, n),
-                                Vector{SVector{3,T}}(undef, n), Vector{T}(undef, n),
-                                Vector{SMatrix{3,3,T,9}}(undef, n))
+    return JacobianWorkspace{T}(
+        Vector{SVector{3, T}}(undef, n), Vector{SVector{3, T}}(undef, n),
+        Vector{SVector{3, T}}(undef, n), Vector{T}(undef, n),
+        Vector{SMatrix{3, 3, T, 9}}(undef, n)
+    )
 end
-JacobianWorkspace(plan::JacobianPlan, ::Type{T}=Float64) where {T} = JacobianWorkspace{T}(plan)
+JacobianWorkspace(plan::JacobianPlan, ::Type{T} = Float64) where {T} = JacobianWorkspace{T}(plan)
 
 Base.eltype(::Type{JacobianWorkspace{T}}) where {T} = T
 
@@ -209,7 +221,7 @@ function coordinatejacobian!(J::AbstractMatrix, plan::JacobianPlan, X::AbstractV
         k = plan.deepest[t]
         k == 0 && continue
         xt = X[t]
-        rows = 3 * (t - 1) + 1 : 3 * t
+        rows = (3 * (t - 1) + 1):(3 * t)
         while k != 0
             u, p = _axis(plan, X, k)
             J[rows, k] = cross(u, xt - p)
@@ -235,16 +247,18 @@ weight for atom `t`. Returns `g`.
 promoted element type of `X` and `w`; without it, one is allocated per
 call.
 """
-function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
-              workspace=nothing)
+function vjp!(
+        g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
+        workspace = nothing
+    )
     Base.require_one_based_indexing(g, X, w)
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
     length(g) == plan.ndih || throw(DimensionMismatch("length(g) = $(length(g)) does not match plan's $(plan.ndih) dihedrals"))
     T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
     ws = _workspace(workspace, plan, T)
-    S0 = fill!(ws.S0, zero(SVector{3,T}))
-    S1 = fill!(ws.S1, zero(SVector{3,T}))
+    S0 = fill!(ws.S0, zero(SVector{3, T}))
+    S1 = fill!(ws.S1, zero(SVector{3, T}))
     for t in eachindex(X)
         k = plan.deepest[t]
         k == 0 && continue
@@ -252,21 +266,21 @@ function vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector
         S1[k] += cross(X[t], w[t])
     end
     # Parents precede children in build order.
-    for k = plan.ndih:-1:1
+    for k in plan.ndih:-1:1
         pk = plan.parent[k]
         if pk != 0
             S0[pk] += S0[k]
             S1[pk] += S1[k]
         end
     end
-    for k = 1:plan.ndih
+    for k in 1:plan.ndih
         u, p = _axis(plan, X, k)
         g[k] = dot(u, S1[k] - cross(p, S0[k]))
     end
     return g
 end
 
-vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}; workspace=nothing) =
+vjp!(g::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}; workspace = nothing) =
     vjp!(g, plan, svectors(X), svectors(w); workspace)
 
 """
@@ -293,8 +307,10 @@ entry per dihedral and `δx` one entry per atom. Returns `δx`.
 promoted element type of `X` and `v`; without it, one is allocated per
 call.
 """
-function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector;
-              workspace=nothing)
+function jvp!(
+        δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector;
+        workspace = nothing
+    )
     Base.require_one_based_indexing(δx, X, v)
     _checklengths(plan, X, "X")
     length(δx) == plan.natoms || throw(DimensionMismatch("length(δx) = $(length(δx)) does not match plan's $(plan.natoms) atoms"))
@@ -302,22 +318,22 @@ function jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:SVect
     T = promote_type(eltype(eltype(X)), eltype(v))
     ws = _workspace(workspace, plan, T)
     Ω, τ = ws.S0, ws.S1
-    for k = 1:plan.ndih
+    for k in 1:plan.ndih
         u, p = _axis(plan, X, k)
         pk = plan.parent[k]
-        Ωpar = pk == 0 ? zero(SVector{3,T}) : Ω[pk]
-        τpar = pk == 0 ? zero(SVector{3,T}) : τ[pk]
+        Ωpar = pk == 0 ? zero(SVector{3, T}) : Ω[pk]
+        τpar = pk == 0 ? zero(SVector{3, T}) : τ[pk]
         Ω[k] = Ωpar + v[k] * u
         τ[k] = τpar - v[k] * cross(u, p)
     end
     for t in eachindex(X)
         k = plan.deepest[t]
-        δx[t] = k == 0 ? zero(SVector{3,T}) : cross(Ω[k], X[t]) + τ[k]
+        δx[t] = k == 0 ? zero(SVector{3, T}) : cross(Ω[k], X[t]) + τ[k]
     end
     return δx
 end
 
-jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, v::AbstractVector; workspace=nothing) =
+jvp!(δx::AbstractVector, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, v::AbstractVector; workspace = nothing) =
     jvp!(δx, plan, svectors(X), v; workspace)
 
 """
@@ -327,7 +343,7 @@ Allocating version of `jvp!`.
 """
 function jvp(plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, v::AbstractVector)
     T = promote_type(eltype(eltype(X)), eltype(v))
-    δx = Vector{SVector{3,T}}(undef, plan.natoms)
+    δx = Vector{SVector{3, T}}(undef, plan.natoms)
     return jvp!(δx, plan, X, v)
 end
 
@@ -350,8 +366,10 @@ size `(plan.ndih, plan.ndih)`. Returns `S`.
 promoted element type of `X` and `w`; without it, one is allocated per
 call.
 """
-function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
-                          workspace=nothing)
+function weightedhessian!(
+        S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:SVector{3}}, w::AbstractVector{<:SVector{3}};
+        workspace = nothing
+    )
     Base.require_one_based_indexing(S, X, w)
     _checklengths(plan, X, "X")
     _checklengths(plan, w, "w")
@@ -360,9 +378,9 @@ function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVect
     fill!(S, zero(eltype(S)))
     T = promote_type(eltype(eltype(X)), eltype(eltype(w)))
     ws = _workspace(workspace, plan, T)
-    S0 = fill!(ws.S0, zero(SVector{3,T}))
+    S0 = fill!(ws.S0, zero(SVector{3, T}))
     s = fill!(ws.s, zero(T))
-    M = fill!(ws.M, zero(SMatrix{3,3,T,9}))
+    M = fill!(ws.M, zero(SMatrix{3, 3, T, 9}))
     for t in eachindex(X)
         k = plan.deepest[t]
         k == 0 && continue
@@ -371,7 +389,7 @@ function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVect
         M[k] += X[t] * w[t]'
     end
     # Parents precede children in build order.
-    for k = plan.ndih:-1:1
+    for k in plan.ndih:-1:1
         pk = plan.parent[k]
         if pk != 0
             S0[pk] += S0[k]
@@ -380,10 +398,10 @@ function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVect
         end
     end
     u, p = ws.S1, ws.p
-    for k = 1:plan.ndih
+    for k in 1:plan.ndih
         u[k], p[k] = _axis(plan, X, k)
     end
-    for j = 1:plan.ndih
+    for j in 1:plan.ndih
         uj, pj = u[j], p[j]
         Tj = M[j] * uj - pj * dot(uj, S0[j]) - uj * (s[j] - dot(pj, S0[j]))
         i = j
@@ -397,7 +415,7 @@ function weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVect
     return S
 end
 
-weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}; workspace=nothing) =
+weightedhessian!(S::AbstractMatrix, plan::JacobianPlan, X::AbstractVector{<:AbstractVector}, w::AbstractVector{<:AbstractVector}; workspace = nothing) =
     weightedhessian!(S, plan, svectors(X), svectors(w); workspace)
 
 """
