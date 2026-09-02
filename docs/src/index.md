@@ -6,14 +6,14 @@ CurrentModule = DihedralParametrization
 
 DihedralParametrization represents [protein structures](https://en.wikipedia.org/wiki/Protein_structure)
 using their rotatable-bond [dihedral angles](https://en.wikipedia.org/wiki/Dihedral_angle#In_stereochemistry):
-the backbone angles φ and ψ, and the side-chain χ angles. A [`bondparametrization`](@ref)
-call separates a protein chain into fixed geometry (bond lengths, bond angles,
+the backbone angles φ and ψ, and the side-chain χ angles. This representation preserves bond lengths and
+angles while using fewer parameters than Cartesian coordinates of the individual atoms.
+
+A [`bondparametrization`](@ref) call separates a protein chain into fixed geometry (bond lengths, bond angles,
 and non-rotatable dihedrals such as ω) and a vector of rotatable dihedral
 angles. [`atomcoordinates`](@ref) reconstructs the atom coordinates, and
 [`dihedralangles`](@ref) measures the dihedral vector back out of a set of
-coordinates; [`atomcoordinates!`](@ref) and [`dihedralangles!`](@ref) write
-into preallocated output. This representation preserves bond lengths and
-angles while using fewer parameters than Cartesian coordinates.
+coordinates. 
 
 The [Derivatives](@ref) page documents the Jacobian and related matrix-vector
 products for optimization and sampling in dihedral coordinates.
@@ -25,7 +25,7 @@ geometry or the derivative layer, see
 ## Installation
 
 ```julia
-pkg> add https://github.com/HolyLab/DihedralParametrization.jl
+pkg> add DihedralParametrization
 ```
 
 ## Prerequisites
@@ -35,22 +35,19 @@ Input must be a complete structure loaded from a CIF or PDB file by
 satisfy these constraints:
 
 - Hydrogens use the Amber naming convention. [ChimeraX](https://www.cgl.ucsf.edu/chimerax/)
-  can add them.
+  and other tools can add them.
 - Histidine is disambiguated as
   [HID/HIE/HIP](https://ambermd.org/Questions/HIS.html), and the amino- and
   carboxyl-terminal residues have "N" and "C" prepended to their residue
   names, respectively. BioStructures's `specializeresnames!(chain)` assigns
   these names once hydrogens have been added.
-- The carboxyl-terminal residue carries its `OXT` atom.
+- The carboxyl-terminal residue includes its `OXT` atom.
 - The chain has no breaks.
 - Only polymer residues are included. To exclude waters, ions, and ligands,
   pass `collectresidues(chain, standardselector)`. `buildchain` preserves
   excluded residues.
-- Atoms and residues with alternatives contribute their defaults.
 
-`bondparametrization` throws an `ArgumentError`, naming the residue at fault,
-for input that does not meet these constraints or that the build tables
-cannot otherwise describe.
+For input that does not meet these constraints, `bondparametrization` throws an `ArgumentError`.
 
 ## Demo
 

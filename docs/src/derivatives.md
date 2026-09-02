@@ -64,6 +64,7 @@ plan = jacobianplan(bp)
 
 frame = (chain[1]["N"], chain[1]["CA"], chain[1]["C"])
 
+# Sum-of-square-differences objective and gradient
 function objective_and_grad(bp, plan, θ, frame, target)
     X = atomcoordinates(bp, θ, frame)
     w = X .- target                     # gradient of (1/2) Σ |X - target|² w.r.t. X
@@ -156,18 +157,16 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
   A step either extends the chain `a–b–c–d` by one atom `d`, using a bond
   length, a bond angle, and a dihedral about the `b–c` bond, or places
   several atoms at once in a rigid local frame (the internal `Extend` and
-  `Branch` types). Only the first kind carries a `rotatable` field, and the
-  entries of `dihedrals` (of length `ndihedrals(bp)`) correspond, in order,
-  to the steps for which it is `true`.
+  `Branch` types). Dihedral angles accumulate only for rotatable bonds.
   [`dihedralangles`](@ref) measures that vector from a set of coordinates,
   inverting `atomcoordinates`. For a chain of `nres` residues the steps run:
 
   1. **Backbone**, residue by residue from residue 2 to residue `nres`: the
-     step placing N_i (rotatable, ψ_{i-1}, about the Cα_{i-1}–C_{i-1} bond),
-     the step placing Cα_i (fixed by ω_{i-1}), and the step placing C_i
-     (φ_i, about the N_i–Cα_i bond, rotatable unless a ring fixes it). After
+     step placing ``N_i`` (rotatable, ``ψ_{i-1}``, about the ``Cα_{i-1}–C_{i-1}`` bond),
+     the step placing ``Cα_i`` (fixed by ``ω_{i-1}``), and the step placing ``C_i``
+     (``φ_i``, about the ``N_i–Cα_i`` bond, rotatable unless a ring fixes it). After
      the last residue's C comes the step placing the terminal OXT atom
-     (rotatable, about the Cα_nres–C_nres bond).
+     (rotatable, about the ``Cα_nres``–``C_nres`` bond).
   2. **Sidechains**, residue by residue from residue 1 to residue `nres`: for
      each residue, its build sequence's own steps in order (typically χ1,
      χ2, … outward from Cα, though a residue's sequence can also expose a
@@ -176,13 +175,11 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
 
   [`dihedrallabels`](@ref) returns this ordering as data: one
   [`DihedralLabel`](@ref) per entry of `dihedrals`, and hence per column of
-  `J`. Each label carries the residue number of the rotation axis, the name
+  `J`. Each label encodes the residue number of the rotation axis, the name
   `:ψ` or `:φ` for a backbone dihedral (`nothing` otherwise), and the four
   `AtomKey` values `a`, `b`, `c`, `d` of the dihedral `a–b–c–d`. Side-chain
   dihedrals are unnamed because the build tables define them from reference
-  atoms that need not be the IUPAC χ reference atoms — lysine's rotation
-  about Cα–Cβ is measured here as C–Cα–Cβ–Cγ rather than N–Cα–Cβ–Cγ — so the
-  four atoms, not a χ number, are what pin down the angle.
+  atoms that need not be the IUPAC χ reference atoms.
 
 - **Fixed vs. rotatable dihedrals.** A step whose `rotatable` field is
   `false`, and every step that places several atoms at once, uses geometry
@@ -193,7 +190,8 @@ J = jacobian(f, backend, dihedrals)   # 3*natoms × ndih, comparable to coordina
     field of the step that places Cα.
   + φ for a residue whose ring fixes it, such as proline: the step placing
     that residue's C is marked non-rotatable and holds the fixed value.
-    Proline's ring also fixes its χ1 and χ2, whose steps are likewise
-    non-rotatable rather than entries in `dihedrals`.
-  + Any other non-rotatable build step, whose fixed value is stored in that
-    step's own `ϕ` field.
+    Proline's ring likewise fixes the side-chain steps that place CD and CG.
+  + Side-chain dihedrals already determined by planarity or a ring closure:
+    the carbonyl O and the backbone amide H (both fixed by the peptide plane),
+    the ring-closing atoms of phenylalanine, tyrosine, tryptophan, and
+    histidine, and arginine's guanidinium HH11 and HH22.
